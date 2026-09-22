@@ -57,7 +57,7 @@ sendDownUpKeyEvents(KeyEvent.KEYCODE_ENTER);   // 2. 自动按回车 → 聊天�
 
 - Android Studio Hedgehog 及以上（AGP 8.2.2 / Gradle 8.2 / JDK 17）
 - minSdk 21（Android 5.0+），targetSdk 34
-- 包名 / applicationId：`com.minecraftmc22.CKIME`
+- 包名 / applicationId：`com.minecraftmc22.ckime`
 
 ## GitHub Actions 自动打包
 
