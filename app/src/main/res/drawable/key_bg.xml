@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 普通按键背景：深灰圆角 + 按压涟漪 -->
+<ripple xmlns:android="http://schemas.android.com/apk/res/android"
+    android:color="#55FFFFFF">
+    <item>
+        <shape android:shape="rectangle">
+            <solid android:color="#FF2E2E36" />
+            <corners android:radius="6dp" />
+        </shape>
+    </item>
+</ripple>

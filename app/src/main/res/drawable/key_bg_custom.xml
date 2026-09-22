@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 自定义按键背景：醒目青蓝色，与普通键区分 -->
+<ripple xmlns:android="http://schemas.android.com/apk/res/android"
+    android:color="#88FFFFFF">
+    <item>
+        <shape android:shape="rectangle">
+            <solid android:color="#FF00897B" />
+            <corners android:radius="6dp" />
+        </shape>
+    </item>
+</ripple>
