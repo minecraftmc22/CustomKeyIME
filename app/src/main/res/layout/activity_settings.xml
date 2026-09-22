@@ -23,12 +23,30 @@
         android:textColor="#FF9AA0A6"
         android:textSize="14sp" />
 
+    <TextView
+        android:id="@+id/tvStatus"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="12dp"
+        android:padding="12dp"
+        android:background="#FF232329"
+        android:textColor="#FFE0E0E0"
+        android:textSize="14sp"
+        android:lineSpacingExtra="3dp" />
+
     <Button
         android:id="@+id/btnImeSettings"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginTop="12dp"
+        android:layout_marginTop="8dp"
         android:text="@string/open_ime_settings" />
+
+    <Button
+        android:id="@+id/btnPicker"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:text="@string/pick_ime" />
 
     <FrameLayout
         android:layout_width="match_parent"

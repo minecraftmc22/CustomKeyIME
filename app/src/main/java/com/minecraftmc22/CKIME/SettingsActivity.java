@@ -2,12 +2,16 @@ package com.minecraftmc22.CKIME;
 
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.content.ComponentName;
+import android.content.Context;
 import android.content.Intent;
 import android.os.Bundle;
 import android.provider.Settings;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.inputmethod.InputMethodInfo;
+import android.view.inputmethod.InputMethodManager;
 import android.widget.BaseAdapter;
 import android.widget.Button;
 import android.widget.CheckBox;
@@ -28,6 +32,7 @@ public class SettingsActivity extends Activity {
     private List<CustomKey> keys;
     private BaseAdapter adapter;
     private TextView emptyView;
+    private TextView tvStatus;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -80,10 +85,48 @@ public class SettingsActivity extends Activity {
         });
 
         findViewById(R.id.btnAdd).setOnClickListener(v -> showKeyDialog(-1));
+        tvStatus = findViewById(R.id.tvStatus);
         findViewById(R.id.btnImeSettings).setOnClickListener(v ->
                 startActivity(new Intent(Settings.ACTION_INPUT_METHOD_SETTINGS)));
+        findViewById(R.id.btnPicker).setOnClickListener(v -> {
+            InputMethodManager imm = (InputMethodManager)
+                    getSystemService(Context.INPUT_METHOD_SERVICE);
+            imm.showInputMethodPicker();
+        });
 
         refresh();
+    }
+
+    @Override
+    protected void onStart() {
+        super.onStart();
+        // 从系统设置返回后刷新启用状态
+        updateImeStatus();
+    }
+
+    /** 检测本输入法的启用/选中状态，并给出下一步引导 */
+    private void updateImeStatus() {
+        InputMethodManager imm = (InputMethodManager)
+                getSystemService(Context.INPUT_METHOD_SERVICE);
+        String imeId = new ComponentName(this, ImeService.class).flattenToString();
+
+        boolean enabled = false;
+        for (InputMethodInfo info : imm.getEnabledInputMethodList()) {
+            if (info.getId().equals(imeId)) {
+                enabled = true;
+                break;
+            }
+        }
+        boolean current = imeId.equals(Settings.Secure.getString(
+                getContentResolver(), Settings.Secure.DEFAULT_INPUT_METHOD));
+
+        if (current) {
+            tvStatus.setText("✅ 已启用并设为当前输入法\n去任意聊天框试试：点键盘顶部的自定义按键即可自动输入并发送");
+        } else if (enabled) {
+            tvStatus.setText("⚠️ 已启用，但还不是当前输入法\n点击下方「切换为当前输入法」，在弹出的列表里选择「自定义按键输入法」");
+        } else {
+            tvStatus.setText("❌ 尚未启用\n1. 点击「去系统设置启用本输入法」\n2. 找到 语言和输入法 → 虚拟键盘 / 管理键盘 / 可用输入法\n3. 打开「自定义按键输入法」的开关\n4. 返回本页，点「切换为当前输入法」");
+        }
     }
 
     private void refresh() {
