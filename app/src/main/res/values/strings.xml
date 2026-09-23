@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">自定义按键输入法</string>
-    <string name="keys_guide">分组管理你的快捷按键。每个按键支持上移/下移/跨组移动，保存后键盘顶部立即生效。\n\n系统设置 → 语言和输入法 → 虚拟键盘 / 管理键盘 → 启用「自定义按键输入法」。</string>
+    <string name="keys_guide">分组管理你的快捷按键：可新建/重命名分组，按键支持上移、下移、跨组移动。\n\n键盘上有两个标签页——「键盘」（普通 QWERTY，支持中/英切换）和「自定义按键」（整屏网格，一点即输入并可自动发送）。</string>
     <string name="open_ime_settings">去系统设置启用</string>
     <string name="pick_ime">切换为当前输入法</string>
     <string name="add_key">＋ 新建按键</string>

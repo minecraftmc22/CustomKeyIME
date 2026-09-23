@@ -5,46 +5,62 @@
 1. 立即输入 `12`
 2. **自动按下回车（Enter）** —— 在微信、QQ 等聊天框中即等于自动发送
 
+同时具备一个可用的普通键盘：QWERTY + **中/英切换**（中文为内置简版拼音输入）。
+
 纯 Java 实现，无任何第三方依赖，可直接用 Android Studio 打开构建。
 
 ## 功能
 
-- ✅ 自定义按键：内容任意（文字、数字、符号、表情、常用短语均可），支持多个
-- ✅ 自动回车：每个按键可独立开关「输入后自动按回车（发送）」
-- ✅ 保存立即生效：设置里保存后，键盘顶部的按键行实时刷新
-- ✅ 完整键盘：QWERTY 字母面板 + 数字符号面板（?123 切换）、大写、退格、空格、回车
-- ✅ 自定义按键行可横向滚动，数量不限
-- ✅ 深色主题界面
+### 键盘模式（顶部标签页切换）
+- **「键盘」标签**：普通 QWERTY 键盘
+  - **中/英切换**：中文模式内置简版拼音输入法（含 4.9 万条拼音词库、切分候选、边打边提示）
+  - 数字/符号面板（`?123` 切换）、大小写、退格、空格、回车、中/英文标点
+- **「自定义按键」标签**：整屏网格面板，按分组排列自定义按键，一点即输入（可自动发送）
+
+### 自定义按键管理（独立界面）
+- ✅ **分组**：新建 / 重命名 / 删除分组，分组顺序即键盘上的显示顺序
+- ✅ **移动**：每个按键支持 ▲ 上移 / ▼ 下移（组内排序），以及「移动到分组」跨组移动
+- ✅ 新建 / 编辑 / 删除按键，内容任意（文字、数字、符号、常用短语）
+- ✅ 每个按键可独立开关「输入后自动按回车（发送）」
+- ✅ 保存立即生效：设置里改完，键盘实时刷新
+- ✅ 输入法启用状态实时检测 + 一键跳转启用 / 切换
 
 ## 使用步骤
 
 1. 用 Android Studio 打开 `CustomKeyIME` 文件夹，等待 Gradle 同步完成
-2. 连接手机（开启 USB 调试），点击 Run 安装；或 Build APK 后自行安装
-   （`app/build/outputs/apk/debug/app-debug.apk`）
-3. 打开 App，点击「＋ 新建自定义按键」，输入内容如 `12`，勾选「输入后自动按回车」，保存
-4. 点击「去系统设置启用本输入法」，在 系统设置 → 语言和输入法 → 虚拟键盘中
-   开启「自定义按键输入法」，并将其设为当前输入法
-5. 打开微信等任意聊天，键盘顶部第一行即你的自定义按键，点击 → 自动输入并发送 🎉
+   （或直接下载 Actions 构建的 APK 安装）
+2. 打开 App，看到顶部状态框显示「❌ 尚未启用」
+3. 点「去系统设置启用」→ 系统设置 → 语言和输入法 → 虚拟键盘 / 管理键盘 → 开启「自定义按键输入法」
+4. 返回 App，点「切换为当前输入法」，在弹出列表里选择「自定义按键输入法」
+5. 打开微信等任意聊天框：
+   - 点键盘顶部「自定义按键」标签 → 一键发送预设内容 🎉
+   - 或留在「键盘」标签正常打字，点左下「中/英」切换中英文
 
 ## 工程结构
 
 ```
 CustomKeyIME/
 ├── app/src/main/
-│   ├── AndroidManifest.xml            # 注册 IME 服务与启动 Activity
-│   ├── java/com/minecraftmc22/CKIME/
-│   │   ├── ImeService.java            # 输入法服务（键盘 + 自定义按键 + 自动回车）
-│   │   ├── SettingsActivity.java      # 按键管理界面（新建/编辑/删除）
-│   │   ├── CustomKey.java             # 按键数据模型
-│   │   └── KeyStore.java              # SharedPreferences + JSON 持久化
+│   ├── AndroidManifest.xml              # 注册 IME 服务与启动 Activity
+│   ├── assets/
+│   │   └── pinyin.txt                   # 拼音词库（约 0.95 MB，4.9 万拼音键）
+│   ├── java/com/minecraftmc22/ckime/
+│   │   ├── ImeService.java              # 输入法服务（双模式键盘 + 中英切换 + 自动回车）
+│   │   ├── PinyinEngine.java            # 简版拼音引擎（精确/切分/前缀三种候选）
+│   │   ├── KeysActivity.java            # 按键管理界面（分组 / 移动 / 增删改）
+│   │   ├── KeyGroup.java                # 分组数据模型
+│   │   ├── CustomKey.java               # 按键数据模型
+│   │   └── KeyStore.java                # SharedPreferences + JSON 持久化（含老数据迁移）
 │   └── res/
-│       ├── xml/method.xml             # IME 声明
-│       ├── layout/                    # 设置页、列表项布局
-│       ├── drawable/                  # 按键背景（普通/功能/自定义）
-│       └── values/                    # 字符串、深色主题
+│       ├── xml/method.xml               # IME 声明
+│       ├── layout/                      # 按键管理页 / 分组头 / 按键项
+│       ├── drawable/                    # 按键与标签页背景
+│       └── values/                      # 字符串、深色主题
 ```
 
-## 核心实现（自动回车）
+## 核心实现
+
+**① 输入后自动回车（发送）**
 
 ```java
 // ImeService.java → fireCustomKey()
@@ -52,6 +68,18 @@ InputConnection ic = getCurrentInputConnection();
 ic.commitText("12", 1);                        // 1. 输入内容
 sendDownUpKeyEvents(KeyEvent.KEYCODE_ENTER);   // 2. 自动按回车 → 聊天框即发送
 ```
+
+**② 拼音候选（三种策略叠加）**
+
+```java
+// PinyinEngine.java → candidates()
+1. 精确匹配        nihao      -> 你好
+2. 全串切分        woxihuanni -> 我 + 喜欢 + 你
+3. 前缀匹配        nih        -> 你好 / 你 / 呢 ...
+```
+
+词库由 jieba 词频表 + pypinyin 生成（多音字按词组规则处理，如 `银行 → yinhang`、`重庆 → chongqing`），
+生成脚本见 `tools/gen_pinyin.py`。
 
 ## 环境要求
 
@@ -64,15 +92,18 @@ sendDownUpKeyEvents(KeyEvent.KEYCODE_ENTER);   // 2. 自动按回车 → 聊天�
 仓库已内置 `.github/workflows/build.yml`：
 
 - 每次 push 到 `main`（或手动触发 workflow_dispatch）自动构建 **debug APK**
-- 推送 `v*` 标签（如 `v1.0`）时会额外创建 GitHub Release 并附上 APK
-- 构建完成后在仓库 **Actions → 对应运行 → Artifacts** 下载 APK
+- 推送 `v*` 标签（如 `v1.4`）时会额外创建 GitHub Release 并附上 APK
+- 构建完成后在仓库 **Actions → 对应运行 → Artifacts** 下载 APK（是 zip，需解压后安装）
 
 ```bash
-git tag v1.0 && git push origin v1.0   # 触发 Release 打包
+git tag v1.4 && git push origin v1.4   # 触发 Release 打包
 ```
 
 ## 常见问题
 
-- **键盘里找不到自定义按键？** 按键显示在键盘最顶上一行（青蓝色），可左右滚动；或点「＋ 设置」确认已保存。
+- **系统设置里找不到本输入法？** 确认装的是最新版；`AndroidManifest.xml` 中 IME 服务的
+  action 必须是 `android.view.InputMethod`（不是权限名 `BIND_INPUT_METHOD`）。
 - **有的 App 里回车是换行不是发送？** 这取决于该 App 对回车键的行为定义，本输入法发送的回车与手动按回车完全等价。
-- **想改按键高度/颜色？** 高度在 `ImeService.java` 的 `lp()` 方法（`dp(48)`），颜色在 `res/drawable/key_bg*.xml`。
+- **中文候选不准/词太少？** 简版词库优先保证常用词；可调整 `tools/gen_pinyin.py` 里的
+  `MAX_WORDS` / `MAX_PER_KEY` 重新生成。
+- **想改按键高度/颜色？** 高度在 `ImeService.java` 的 `dp(48)` / `dp(52)`，颜色在 `res/drawable/key_bg*.xml`。
