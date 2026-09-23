@@ -100,6 +100,8 @@ public class KeysActivity extends Activity {
 
         findViewById(R.id.btnAddKey).setOnClickListener(v -> showKeyDialog(-1, -1));
         findViewById(R.id.btnAddGroup).setOnClickListener(v -> showNewGroupDialog());
+        findViewById(R.id.btnSettings).setOnClickListener(v ->
+                startActivity(new Intent(this, SettingsActivity.class)));
         findViewById(R.id.btnImeSettings).setOnClickListener(v ->
                 startActivity(new Intent(Settings.ACTION_INPUT_METHOD_SETTINGS)));
         findViewById(R.id.btnPicker).setOnClickListener(v -> {

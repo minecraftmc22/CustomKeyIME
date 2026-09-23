@@ -1,19 +1,19 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <style name="Theme.CustomKeyIME" parent="android:Theme.Material.NoActionBar">
-        <item name="android:colorPrimary">#FF3F51B5</item>
-        <item name="android:colorPrimaryDark">#FF283593</item>
-        <item name="android:colorAccent">#FF5C6BC0</item>
-        <item name="android:windowBackground">#FF16161A</item>
-        <item name="android:textColorPrimary">#FFEEEEEE</item>
-        <item name="android:textColorSecondary">#FF9AA0A6</item>
+        <item name="android:colorPrimary">#FFD0BCFF</item>
+        <item name="android:colorPrimaryDark">#FF141218</item>
+        <item name="android:colorAccent">#FFD0BCFF</item>
+        <item name="android:windowBackground">#FF141218</item>
+        <item name="android:textColorPrimary">#FFE6E0E9</item>
+        <item name="android:textColorSecondary">#FF938F99</item>
         <item name="android:alertDialogTheme">@style/Dialog.CustomKeyIME</item>
     </style>
 
     <style name="Dialog.CustomKeyIME" parent="android:Theme.Material.Dialog.Alert">
-        <item name="android:colorAccent">#FF5C6BC0</item>
-        <item name="android:windowBackground">#FF232329</item>
-        <item name="android:textColor">#FFEEEEEE</item>
-        <item name="android:textColorPrimary">#FFEEEEEE</item>
+        <item name="android:colorAccent">#FFD0BCFF</item>
+        <item name="android:windowBackground">#FF211F26</item>
+        <item name="android:textColor">#FFE6E0E9</item>
+        <item name="android:textColorPrimary">#FFE6E0E9</item>
     </style>
 </resources>

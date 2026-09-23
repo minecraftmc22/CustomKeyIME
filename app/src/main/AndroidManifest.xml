@@ -17,6 +17,11 @@
             </intent-filter>
         </activity>
 
+        <!-- 键盘设置：高度 / 背景透明度 / 明暗 -->
+        <activity
+            android:name=".SettingsActivity"
+            android:exported="false" />
+
         <!-- 输入法服务 -->
         <service
             android:name=".ImeService"

@@ -1,11 +1,19 @@
 package com.minecraftmc22.ckime;
 
+import android.content.ClipData;
+import android.content.ClipboardManager;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.graphics.drawable.Drawable;
+import android.graphics.drawable.GradientDrawable;
+import android.graphics.drawable.StateListDrawable;
 import android.inputmethodservice.InputMethodService;
+import android.os.Handler;
 import android.text.TextUtils;
 import android.view.Gravity;
+import android.view.HapticFeedbackConstants;
 import android.view.KeyEvent;
+import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.inputmethod.EditorInfo;
@@ -15,36 +23,59 @@ import android.widget.HorizontalScrollView;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
+import android.widget.Toast;
 
 import java.util.ArrayList;
 import java.util.List;
 
 /**
- * 自定义按键输入法。
+ * 自定义按键输入法（Material You 3 主题）。
  *
- * 两种键盘模式（顶部标签页切换）：
- *   1. 「键盘」  —— 普通 QWERTY 键盘，支持 中/英 切换（中文为内置简版拼音）
- *   2. 「自定义」—— 整屏网格，按分组排列所有自定义按键，一点即输入（可选自动回车发送）
+ * 4 个标签页：
+ *   键盘 / 自定义按键 / 剪贴板 / 记忆
+ *
+ * 功能：
+ *   - 普通键盘：QWERTY + 中英切换（内置简版拼音）
+ *   - 自定义按键：整屏网格，一点输入并可自动回车发送
+ *   - 剪贴板：历史记录 + 复制当前选中 + 点击粘贴
+ *   - 输入记忆：按频率记录常用内容，点击再次输入
+ *   - 退格：长按快速删除；长按后上滑松手 = 删除全部文本
+ *   - 键盘高度 / 背景透明度 / 明暗：设置里可调，即时生效
  */
 public class ImeService extends InputMethodService
         implements SharedPreferences.OnSharedPreferenceChangeListener {
 
-    private static final int MODE_KEYS = 0;     // 自定义按键网格
-    private static final int MODE_NORMAL = 1;   // 普通键盘
+    private static final int MODE_NORMAL = 0;   // 键盘
+    private static final int MODE_KEYS = 1;     // 自定义按键
+    private static final int MODE_CLIP = 2;     // 剪贴板
+    private static final int MODE_MEMORY = 3;   // 输入记忆
 
     private static final String STATE_PREFS = "ime_state";
     private static final String K_MODE = "mode";
     private static final String K_CHINESE = "chinese";
 
-    private boolean caps = false;         // 字母大写
-    private boolean symbolMode = false;   // 数字/符号面板
-    private boolean chinese = true;       // 中文(true) / 英文(false)
+    private boolean caps = false;
+    private boolean symbolMode = false;
+    private boolean chinese = true;
     private int mode = MODE_NORMAL;
 
-    // 拼音输入状态
+    // 拼音输入
     private String pinyinBuffer = "";
     private List<String> candidates = new ArrayList<>();
     private LinearLayout candidateBox;
+
+    // 退格长按 / 上滑删除全部
+    private final Handler handler = new Handler();
+    private boolean bsLong = false;
+    private boolean bsSwiped = false;
+    private float bsDownY = 0;
+    private static final int LONG_PRESS_MS = 400;
+    private final Runnable repeatDelete = new Runnable() {
+        @Override public void run() {
+            sendDownUpKeyEvents(KeyEvent.KEYCODE_DEL);
+            handler.postDelayed(this, 45);
+        }
+    };
 
     // ------------------------------------------------------------------
     // 生命周期
@@ -53,16 +84,27 @@ public class ImeService extends InputMethodService
     @Override
     public void onCreate() {
         super.onCreate();
+        ThemeHelper.init(this);
+
         SharedPreferences sp = getSharedPreferences(STATE_PREFS, MODE_PRIVATE);
         mode = sp.getInt(K_MODE, MODE_NORMAL);
         chinese = sp.getBoolean(K_CHINESE, true);
 
-        // 监听按键数据变化：在设置里改完，键盘立即刷新
         getSharedPreferences(KeyStore.PREFS, MODE_PRIVATE)
                 .registerOnSharedPreferenceChangeListener(this);
+        getSharedPreferences(AppSettings.PREFS, MODE_PRIVATE)
+                .registerOnSharedPreferenceChangeListener(this);
 
-        // 后台预加载拼音词库
-        PinyinEngine.preload(this);
+        // 监听系统剪贴板变化（IME 活跃期间），写入历史
+        ClipboardManager cm = (ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
+        if (cm != null) cm.addPrimaryClipChangedListener(clipListener);
+    }
+
+    @Override
+    public void onDestroy() {
+        ClipboardManager cm = (ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
+        if (cm != null) cm.removePrimaryClipChangedListener(clipListener);
+        super.onDestroy();
     }
 
     @Override
@@ -74,6 +116,8 @@ public class ImeService extends InputMethodService
     public void onStartInputView(EditorInfo info, boolean restarting) {
         super.onStartInputView(info, restarting);
         resetPinyin();
+        // 确保高度/背景/主题等设置变更后立即生效
+        rebuild();
     }
 
     @Override
@@ -84,13 +128,11 @@ public class ImeService extends InputMethodService
 
     @Override
     public void onSharedPreferenceChanged(SharedPreferences prefs, String key) {
-        // 按键/分组有改动：若当前正显示自定义面板，立即重建
-        if (mode == MODE_KEYS) rebuild();
+        if (isInputViewShown()) rebuild();
     }
 
     @Override
     public boolean onEvaluateFullscreenMode() {
-        // 禁止横屏全屏抽取模式，保证回车事件发到原输入框
         return false;
     }
 
@@ -101,7 +143,6 @@ public class ImeService extends InputMethodService
                 .apply();
     }
 
-    /** 重建整个键盘（切换模式/中英/大小写/符号面板时调用）。 */
     private void rebuild() {
         setInputView(buildKeyboard());
     }
@@ -114,10 +155,10 @@ public class ImeService extends InputMethodService
         candidateBox = null;
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
-        root.setBackgroundColor(0xFF141419);
+        root.setBackgroundColor(ThemeHelper.background(
+                AppSettings.getBgAlpha(this), AppSettings.getBgBrightness(this)));
         root.setPadding(dp(4), dp(4), dp(4), dp(6));
 
-        // 顶部标签页
         root.addView(buildTabRow(), new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
@@ -126,6 +167,12 @@ public class ImeService extends InputMethodService
                     ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
             root.addView(buildCustomBottomRow(), new LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        } else if (mode == MODE_CLIP) {
+            root.addView(buildClipPanel(), new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
+        } else if (mode == MODE_MEMORY) {
+            root.addView(buildMemoryPanel(), new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
         } else {
             if (chinese && !symbolMode) {
                 root.addView(buildCandidateBar(), new LinearLayout.LayoutParams(
@@ -136,35 +183,35 @@ public class ImeService extends InputMethodService
         return root;
     }
 
-    /** 顶部标签页：「自定义」/「键盘」 */
+    /** 顶部标签页 + 设置入口 */
     private View buildTabRow() {
         LinearLayout bar = new LinearLayout(this);
         bar.setOrientation(LinearLayout.HORIZONTAL);
 
-        Button tabKeys = tabButton("自定义按键", mode == MODE_KEYS);
-        tabKeys.setOnClickListener(v -> {
-            if (mode == MODE_KEYS) return;
-            flushPinyin();
-            mode = MODE_KEYS;
-            saveState();
-            rebuild();
-        });
+        String[] labels = {"键盘", "自定义", "剪贴板", "记忆"};
+        int[] modes = {MODE_NORMAL, MODE_KEYS, MODE_CLIP, MODE_MEMORY};
+        for (int i = 0; i < labels.length; i++) {
+            final int m = modes[i];
+            Button t = tabButton(labels[i], mode == m);
+            t.setOnClickListener(v -> {
+                if (mode == m) return;
+                if (mode == MODE_NORMAL) flushPinyin();
+                mode = m;
+                saveState();
+                rebuild();
+            });
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, dp(38), 1f);
+            lp.setMargins(dp(2), dp(2), dp(2), dp(4));
+            bar.addView(t, lp);
+        }
 
-        Button tabKb = tabButton("键盘", mode == MODE_NORMAL);
-        tabKb.setOnClickListener(v -> {
-            if (mode == MODE_NORMAL) return;
-            mode = MODE_NORMAL;
-            saveState();
-            rebuild();
-        });
-
-        LinearLayout.LayoutParams lp1 = new LinearLayout.LayoutParams(0, dp(38), 1f);
-        lp1.setMargins(dp(2), dp(2), dp(2), dp(4));
-        LinearLayout.LayoutParams lp2 = new LinearLayout.LayoutParams(0, dp(38), 1f);
-        lp2.setMargins(dp(2), dp(2), dp(2), dp(4));
-
-        bar.addView(tabKeys, lp1);
-        bar.addView(tabKb, lp2);
+        Button gear = tabButton("⚙", false);
+        gear.setOnClickListener(v ->
+                startActivity(new Intent(this, SettingsActivity.class)
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)));
+        LinearLayout.LayoutParams glp = new LinearLayout.LayoutParams(dp(42), dp(38));
+        glp.setMargins(dp(2), dp(2), dp(2), dp(4));
+        bar.addView(gear, glp);
         return bar;
     }
 
@@ -172,9 +219,9 @@ public class ImeService extends InputMethodService
         Button b = new Button(this);
         b.setText(label);
         b.setAllCaps(false);
-        b.setTextSize(14);
-        b.setTextColor(active ? 0xFFFFFFFF : 0xFF9AA0A6);
-        b.setBackgroundResource(active ? R.drawable.tab_active : R.drawable.tab_inactive);
+        b.setTextSize(13);
+        b.setTextColor(active ? ThemeHelper.onSurface : ThemeHelper.onSurfaceDim);
+        b.setBackground(rounded(active ? ThemeHelper.accent : ThemeHelper.surfaceVariant, 6));
         b.setPadding(0, 0, 0, 0);
         b.setMinWidth(0);
         b.setMinimumWidth(0);
@@ -183,14 +230,17 @@ public class ImeService extends InputMethodService
         return b;
     }
 
-    /** 中文候选栏：左边显示拼音串，右边是候选词 */
+    // ------------------------------------------------------------------
+    // 候选栏（拼音）
+    // ------------------------------------------------------------------
+
     private View buildCandidateBar() {
         HorizontalScrollView hsv = new HorizontalScrollView(this);
         hsv.setHorizontalScrollBarEnabled(false);
         candidateBox = new LinearLayout(this);
         candidateBox.setOrientation(LinearLayout.HORIZONTAL);
         candidateBox.setGravity(Gravity.CENTER_VERTICAL);
-        candidateBox.setBackgroundColor(0xFF1C1C22);
+        candidateBox.setBackgroundColor(ThemeHelper.surfaceVariant2);
         hsv.addView(candidateBox, new ViewGroup.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, dp(46)));
         updateCandidates();
@@ -201,10 +251,9 @@ public class ImeService extends InputMethodService
         if (candidateBox == null) return;
         candidateBox.removeAllViews();
 
-        // 拼音串显示
         TextView tv = new TextView(this);
         tv.setText(pinyinBuffer.isEmpty() ? "拼音" : pinyinBuffer);
-        tv.setTextColor(pinyinBuffer.isEmpty() ? 0xFF6B7075 : 0xFF80CBC4);
+        tv.setTextColor(pinyinBuffer.isEmpty() ? ThemeHelper.onSurfaceDim : ThemeHelper.accent);
         tv.setTextSize(16);
         tv.setGravity(Gravity.CENTER_VERTICAL);
         tv.setPadding(dp(12), 0, dp(12), 0);
@@ -219,14 +268,14 @@ public class ImeService extends InputMethodService
             Button b = new Button(this);
             b.setText(w);
             b.setAllCaps(false);
-            b.setTextColor(0xFFE8EAED);
+            b.setTextColor(ThemeHelper.onSurface);
             b.setTextSize(17);
             b.setPadding(dp(10), 0, dp(10), 0);
             b.setMinWidth(0);
             b.setMinimumWidth(0);
             b.setMinHeight(0);
             b.setMinimumHeight(0);
-            b.setBackgroundResource(R.drawable.key_bg_candidate);
+            b.setBackground(rounded(ThemeHelper.surfaceVariant, 6));
             b.setOnClickListener(v -> pickCandidate(w));
             LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.WRAP_CONTENT, dp(40));
@@ -235,49 +284,36 @@ public class ImeService extends InputMethodService
         }
     }
 
-    // ---------------------- 普通键盘 ----------------------
+    // ------------------------------------------------------------------
+    // 普通键盘
+    // ------------------------------------------------------------------
 
     private void buildNormalRows(LinearLayout root) {
         if (symbolMode) {
             String[] s1 = {"1", "2", "3", "4", "5", "6", "7", "8", "9", "0"};
             String[] s2 = {"@", "#", "$", "%", "&", "-", "+", "(", ")"};
             String[] s3 = {"*", "\"", "'", ":", ";", "!", "?"};
-
             root.addView(letterRow(s1));
             root.addView(letterRow(s2));
-
             LinearLayout row3 = row();
-            row3.addView(funcKey("abc", v -> {
-                symbolMode = false;
-                rebuild();
-            }));
+            row3.addView(funcKey("abc", v -> { symbolMode = false; rebuild(); }));
             for (String s : s3) row3.addView(letterKey(s));
-            row3.addView(funcKey("⌫", v -> onBackspace()));
+            row3.addView(backspaceKey());
             root.addView(row3);
         } else {
             String[] r1 = {"q", "w", "e", "r", "t", "y", "u", "i", "o", "p"};
             String[] r2 = {"a", "s", "d", "f", "g", "h", "j", "k", "l"};
             String[] r3 = {"z", "x", "c", "v", "b", "n", "m"};
-
             root.addView(letterRow(r1));
             root.addView(letterRow(r2));
-
             LinearLayout row3 = row();
-            row3.addView(funcKey("⇧", v -> {
-                caps = !caps;
-                rebuild();
-            }));
+            row3.addView(funcKey("⇧", v -> { caps = !caps; rebuild(); }));
             for (String s : r3) row3.addView(letterKey(s));
-            row3.addView(funcKey("?123", v -> {
-                flushPinyin();
-                symbolMode = true;
-                rebuild();
-            }));
-            row3.addView(funcKey("⌫", v -> onBackspace()));
+            row3.addView(funcKey("?123", v -> { flushPinyin(); symbolMode = true; rebuild(); }));
+            row3.addView(backspaceKey());
             root.addView(row3);
         }
 
-        // 底部行：中/英 + 标点 + 空格 + 回车
         LinearLayout row4 = row();
         row4.addView(funcKey(chinese ? "中" : "英", v -> toggleLanguage()));
         row4.addView(funcKey(chinese ? "，" : ",", v -> onPunctuation(chinese ? "，" : ",")));
@@ -296,7 +332,6 @@ public class ImeService extends InputMethodService
 
     private void onLetter(String ch) {
         if (chinese && !symbolMode) {
-            // 中文：字母进入拼音缓冲
             pinyinBuffer += ch.toLowerCase();
             if (pinyinBuffer.length() > 24) flushPinyin();
             updateCandidates();
@@ -318,6 +353,78 @@ public class ImeService extends InputMethodService
         sendDownUpKeyEvents(KeyEvent.KEYCODE_DEL);
     }
 
+    /** 退格键：长按快速删除；长按后上滑松手 = 删除全部文本 */
+    private Button backspaceKey() {
+        Button b = funcKey("⌫", v -> {});
+        b.setOnTouchListener(new View.OnTouchListener() {
+            final Runnable pending = new Runnable() {
+                @Override public void run() {
+                    bsLong = true;
+                    b.setText("⌫");
+                    b.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS);
+                    handler.removeCallbacks(repeatDelete);
+                    handler.post(repeatDelete);
+                }
+            };
+            @Override public boolean onTouch(View v, MotionEvent ev) {
+                switch (ev.getActionMasked()) {
+                    case MotionEvent.ACTION_DOWN:
+                        bsLong = false;
+                        bsSwiped = false;
+                        bsDownY = ev.getRawY();
+                        handler.removeCallbacks(pending);
+                        handler.postDelayed(pending, LONG_PRESS_MS);
+                        return true;
+                    case MotionEvent.ACTION_MOVE:
+                        if (!bsSwiped && (bsDownY - ev.getRawY()) > dp(70)) {
+                            bsSwiped = true;
+                            b.setText("清空");
+                            b.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS);
+                            handler.removeCallbacks(pending);
+                            handler.removeCallbacks(repeatDelete);
+                        }
+                        return true;
+                    case MotionEvent.ACTION_UP:
+                        handler.removeCallbacks(pending);
+                        handler.removeCallbacks(repeatDelete);
+                        b.setText("⌫");
+                        if (bsSwiped) {
+                            deleteAllText();
+                        } else if (!bsLong) {
+                            onBackspace();
+                        }
+                        bsLong = false;
+                        bsSwiped = false;
+                        return true;
+                    case MotionEvent.ACTION_CANCEL:
+                        handler.removeCallbacks(pending);
+                        handler.removeCallbacks(repeatDelete);
+                        b.setText("⌫");
+                        bsLong = false;
+                        bsSwiped = false;
+                        return true;
+                }
+                return false;
+            }
+        });
+        return b;
+    }
+
+    private void deleteAllText() {
+        InputConnection ic = getCurrentInputConnection();
+        if (ic == null) return;
+        try {
+            CharSequence before = ic.getTextBeforeCursor(100000, 0);
+            CharSequence after = ic.getTextAfterCursor(100000, 0);
+            int bl = before == null ? 0 : before.length();
+            int al = after == null ? 0 : after.length();
+            ic.deleteSurroundingText(bl, al);
+            Toast.makeText(this, "已清空全部内容", Toast.LENGTH_SHORT).show();
+        } catch (Throwable ignored) {
+            try { ic.deleteSurroundingText(100000, 100000); } catch (Throwable ignored2) {}
+        }
+    }
+
     private void onEnter() {
         if (chinese && !symbolMode && !pinyinBuffer.isEmpty()) {
             commitFirstCandidate();
@@ -334,12 +441,8 @@ public class ImeService extends InputMethodService
     }
 
     private void toggleLanguage() {
-        if (pinyinBuffer.isEmpty()) {
-            chinese = !chinese;
-        } else {
-            commitFirstCandidate();
-            chinese = !chinese;
-        }
+        if (pinyinBuffer.isEmpty()) chinese = !chinese;
+        else { commitFirstCandidate(); chinese = !chinese; }
         symbolMode = false;
         saveState();
         rebuild();
@@ -347,28 +450,22 @@ public class ImeService extends InputMethodService
 
     private void pickCandidate(String w) {
         commit(w);
+        MemoryStore.record(this, w);
         pinyinBuffer = "";
         updateCandidates();
     }
 
-    /** 把当前拼音缓冲提交掉（优先第一个候选词，否则原样提交拼音）。 */
     private void commitFirstCandidate() {
         if (pinyinBuffer.isEmpty()) return;
-        String out;
-        if (!candidates.isEmpty()) {
-            out = candidates.get(0);
-        } else {
-            out = pinyinBuffer;
-        }
+        String out = !candidates.isEmpty() ? candidates.get(0) : pinyinBuffer;
         commit(out);
+        MemoryStore.record(this, out);
         pinyinBuffer = "";
         updateCandidates();
     }
 
     private void flushPinyin() {
-        if (!pinyinBuffer.isEmpty()) {
-            commitFirstCandidate();
-        }
+        if (!pinyinBuffer.isEmpty()) commitFirstCandidate();
     }
 
     private void resetPinyin() {
@@ -377,7 +474,9 @@ public class ImeService extends InputMethodService
         if (candidateBox != null) updateCandidates();
     }
 
-    // ---------------------- 自定义按键网格 ----------------------
+    // ------------------------------------------------------------------
+    // 自定义按键网格
+    // ------------------------------------------------------------------
 
     private View buildCustomGrid() {
         ScrollView sv = new ScrollView(this);
@@ -392,10 +491,9 @@ public class ImeService extends InputMethodService
         for (KeyGroup g : groups) {
             if (g.keys.isEmpty()) continue;
             any = true;
-
             TextView t = new TextView(this);
             t.setText(g.name);
-            t.setTextColor(0xFF80CBC4);
+            t.setTextColor(ThemeHelper.accent);
             t.setTextSize(12);
             t.setPadding(dp(6), first ? dp(4) : dp(10), dp(6), dp(2));
             col.addView(t);
@@ -413,20 +511,15 @@ public class ImeService extends InputMethodService
                 row.addView(gridKey(k), gridParams());
                 i++;
             }
-            // 补齐占位，保持左对齐
             if (row != null) {
                 int rem = (4 - (g.keys.size() % 4)) % 4;
-                for (int j = 0; j < rem; j++) {
-                    View sp = new View(this);
-                    row.addView(sp, gridParams());
-                }
+                for (int j = 0; j < rem; j++) row.addView(new View(this), gridParams());
             }
         }
-
         if (!any) {
             TextView empty = new TextView(this);
             empty.setText("还没有自定义按键\n点下方「＋ 管理按键」新建");
-            empty.setTextColor(0xFF6B7075);
+            empty.setTextColor(ThemeHelper.onSurfaceDim);
             empty.setTextSize(14);
             empty.setGravity(Gravity.CENTER);
             col.addView(empty, new LinearLayout.LayoutParams(
@@ -440,7 +533,7 @@ public class ImeService extends InputMethodService
         b.setText(k.text + (k.autoEnter ? " ↵" : ""));
         b.setAllCaps(false);
         b.setTextSize(14);
-        b.setTextColor(0xFFE8EAED);
+        b.setTextColor(ThemeHelper.ON_ACCENT);
         b.setSingleLine(true);
         b.setEllipsize(TextUtils.TruncateAt.END);
         b.setPadding(dp(2), 0, dp(2), 0);
@@ -448,13 +541,13 @@ public class ImeService extends InputMethodService
         b.setMinimumWidth(0);
         b.setMinHeight(0);
         b.setMinimumHeight(0);
-        b.setBackgroundResource(R.drawable.key_bg_custom);
+        b.setBackground(rounded(ThemeHelper.accent, 6));
         b.setOnClickListener(v -> fireCustomKey(k));
         return b;
     }
 
     private LinearLayout.LayoutParams gridParams() {
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, dp(52), 1f);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, keyH(52), 1f);
         lp.setMargins(dp(2), dp(3), dp(2), dp(3));
         return lp;
     }
@@ -469,23 +562,153 @@ public class ImeService extends InputMethodService
         return row;
     }
 
-    /**
-     * 核心：输入自定义内容，然后（可选）自动按回车。
-     */
     private void fireCustomKey(CustomKey k) {
         InputConnection ic = getCurrentInputConnection();
         if (ic == null) return;
         if (!k.text.isEmpty()) {
             ic.commitText(k.text, 1);
+            MemoryStore.record(this, k.text);
         }
         if (k.autoEnter) {
-            // 等同于用户按下回车键；在微信/QQ/聊天框里即触发「发送」
             sendDownUpKeyEvents(KeyEvent.KEYCODE_ENTER);
         }
     }
 
     // ------------------------------------------------------------------
-    // 控件工具方法
+    // 剪贴板面板
+    // ------------------------------------------------------------------
+
+    private final ClipboardManager.OnPrimaryClipChangedListener clipListener = () -> {
+        ClipboardManager cm = (ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
+        if (cm == null || !cm.hasPrimaryClip()) return;
+        ClipData.Item item = cm.getPrimaryClip().getItemAt(0);
+        CharSequence cs = item.coerceToText(this);
+        if (cs != null) ClipboardStore.add(this, cs.toString());
+    };
+
+    private View buildClipPanel() {
+        ScrollView sv = new ScrollView(this);
+        LinearLayout col = new LinearLayout(this);
+        col.setOrientation(LinearLayout.VERTICAL);
+        sv.addView(col, new ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        LinearLayout actions = row();
+        actions.addView(funcKeyWeight("复制当前选中", v -> copySelection(), 1.6f));
+        actions.addView(funcKey("清空", v -> {
+            ClipboardStore.clear(this);
+            rebuild();
+        }));
+        col.addView(actions);
+
+        List<String> items = ClipboardStore.load(this);
+        if (items.isEmpty()) {
+            TextView empty = new TextView(this);
+            empty.setText("暂无剪贴板历史\n复制的内容会出现在这里");
+            empty.setTextColor(ThemeHelper.onSurfaceDim);
+            empty.setTextSize(14);
+            empty.setGravity(Gravity.CENTER);
+            col.addView(empty, new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, dp(120)));
+        } else {
+            for (int i = 0; i < items.size(); i++) {
+                final String it = items.get(i);
+                final int idx = i;
+                Button b = panelItem(it);
+                b.setOnClickListener(v -> {
+                    commit(it);
+                    MemoryStore.record(this, it);
+                });
+                b.setOnLongClickListener(v -> {
+                    ClipboardStore.remove(this, idx);
+                    rebuild();
+                    return true;
+                });
+                col.addView(b, new LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT, keyH(42)));
+            }
+        }
+        return sv;
+    }
+
+    private void copySelection() {
+        InputConnection ic = getCurrentInputConnection();
+        if (ic == null) return;
+        CharSequence sel = ic.getSelectedText(0);
+        String s = sel == null ? null : sel.toString();
+        if (s == null || s.isEmpty()) {
+            Toast.makeText(this, "请先在输入框里选中要复制的内容", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        ClipboardManager cm = (ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
+        if (cm != null) cm.setPrimaryClip(ClipData.newPlainText("ckime", s));
+        ClipboardStore.add(this, s);
+        rebuild();
+    }
+
+    // ------------------------------------------------------------------
+    // 输入记忆面板
+    // ------------------------------------------------------------------
+
+    private View buildMemoryPanel() {
+        ScrollView sv = new ScrollView(this);
+        LinearLayout col = new LinearLayout(this);
+        col.setOrientation(LinearLayout.VERTICAL);
+        sv.addView(col, new ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        LinearLayout actions = row();
+        actions.addView(funcKey("清空记忆", v -> {
+            MemoryStore.clear(this);
+            rebuild();
+        }));
+        col.addView(actions);
+
+        List<MemoryStore.Item> items = MemoryStore.load(this);
+        if (items.isEmpty()) {
+            TextView empty = new TextView(this);
+            empty.setText("暂无输入记忆\n你常用的内容会按频率出现在这里");
+            empty.setTextColor(ThemeHelper.onSurfaceDim);
+            empty.setTextSize(14);
+            empty.setGravity(Gravity.CENTER);
+            col.addView(empty, new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, dp(120)));
+        } else {
+            for (final MemoryStore.Item it : items) {
+                Button b = panelItem(it.text + "   ·" + it.count);
+                b.setOnClickListener(v -> commit(it.text));
+                b.setOnLongClickListener(v -> {
+                    MemoryStore.remove(this, it.text);
+                    rebuild();
+                    return true;
+                });
+                col.addView(b, new LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT, keyH(42)));
+            }
+        }
+        return sv;
+    }
+
+    private Button panelItem(String text) {
+        Button b = new Button(this);
+        b.setText(text);
+        b.setAllCaps(false);
+        b.setTextColor(ThemeHelper.onSurface);
+        b.setTextSize(14);
+        b.setGravity(Gravity.START | Gravity.CENTER_VERTICAL);
+        b.setPadding(dp(12), 0, dp(12), 0);
+        b.setSingleLine(true);
+        b.setEllipsize(TextUtils.TruncateAt.END);
+        b.setMinWidth(0);
+        b.setMinimumWidth(0);
+        b.setMinHeight(0);
+        b.setMinimumHeight(0);
+        b.setBackground(rounded(ThemeHelper.surfaceVariant, 6));
+        return b;
+    }
+
+    // ------------------------------------------------------------------
+    // 控件工具
     // ------------------------------------------------------------------
 
     private LinearLayout row() {
@@ -502,7 +725,7 @@ public class ImeService extends InputMethodService
 
     private Button spaceKey() {
         Button b = makeKey("空格");
-        b.setTextColor(0xFF9AA0A6);
+        b.setTextColor(ThemeHelper.onSurfaceDim);
         b.setTextSize(14);
         b.setOnClickListener(v -> onSpace());
         return b;
@@ -522,8 +745,8 @@ public class ImeService extends InputMethodService
 
     private Button funcKeyWeight(String label, View.OnClickListener l, float weight) {
         Button b = makeKey(label);
-        b.setBackgroundResource(R.drawable.key_bg_func);
-        b.setTextColor(0xFFFFFFFF);
+        b.setBackground(keyBg(ThemeHelper.accentContainer));
+        b.setTextColor(ThemeHelper.onSurface);
         b.setLayoutParams(lp(weight));
         b.setOnClickListener(l);
         return b;
@@ -533,27 +756,52 @@ public class ImeService extends InputMethodService
         Button b = new Button(this);
         b.setText(label);
         b.setAllCaps(false);
-        b.setTextColor(0xFFE8EAED);
+        b.setTextColor(ThemeHelper.onSurface);
         b.setTextSize(16);
         b.setMinWidth(0);
         b.setMinimumWidth(0);
         b.setMinHeight(0);
         b.setMinimumHeight(0);
         b.setPadding(dp(2), 0, dp(2), 0);
-        b.setBackgroundResource(R.drawable.key_bg);
+        b.setBackground(keyBg(ThemeHelper.surfaceVariant));
         b.setLayoutParams(lp(1f));
         return b;
     }
 
     private LinearLayout.LayoutParams lp(float weight) {
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, dp(48), weight);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, keyH(48), weight);
         lp.setMargins(dp(2), dp(3), dp(2), dp(3));
         return lp;
+    }
+
+    /** 圆角背景（普通） */
+    private Drawable rounded(int color, float radiusDp) {
+        GradientDrawable d = new GradientDrawable();
+        d.setColor(color);
+        d.setCornerRadius(radiusDp * getResources().getDisplayMetrics().density);
+        return d;
+    }
+
+    /** 带按压态的背景 */
+    private Drawable keyBg(int color) {
+        StateListDrawable sld = new StateListDrawable();
+        sld.addState(new int[]{android.R.attr.state_pressed},
+                rounded(ThemeHelper.applyBrightness(color, -14), 6));
+        sld.addState(new int[]{}, rounded(color, 6));
+        return sld;
     }
 
     private void commit(String s) {
         InputConnection ic = getCurrentInputConnection();
         if (ic != null) ic.commitText(s, 1);
+    }
+
+    private float hscale() {
+        return AppSettings.getKeyHeightPercent(this) / 100f;
+    }
+
+    private int keyH(int baseDp) {
+        return Math.round(baseDp * hscale() * getResources().getDisplayMetrics().density);
     }
 
     private int dp(int v) {
