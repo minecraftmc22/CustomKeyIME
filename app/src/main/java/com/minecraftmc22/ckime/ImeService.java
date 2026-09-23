@@ -36,6 +36,8 @@ import java.util.List;
  *
  * 功能：
  *   - 普通键盘：QWERTY + 中英切换（内置简版拼音）
+ *     · 中文：支持首字母简拼联想（nh -> 你好）；回车直接上屏所打字母
+ *     · 英文：边打边出词语联想（he -> hello / help ...）
  *   - 自定义按键：整屏网格，一点输入并可自动回车发送
  *   - 剪贴板：历史记录 + 复制当前选中 + 点击粘贴
  *   - 输入记忆：按频率记录常用内容，点击再次输入
@@ -63,6 +65,9 @@ public class ImeService extends InputMethodService
     private String pinyinBuffer = "";
     private List<String> candidates = new ArrayList<>();
     private LinearLayout candidateBox;
+
+    // 英文输入（联想用：跟踪当前已上屏的词内字母）
+    private String englishBuffer = "";
 
     // 退格长按 / 上滑删除全部
     private final Handler handler = new Handler();
@@ -174,7 +179,7 @@ public class ImeService extends InputMethodService
             root.addView(buildMemoryPanel(), new LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
         } else {
-            if (chinese && !symbolMode) {
+            if (!symbolMode) {
                 root.addView(buildCandidateBar(), new LinearLayout.LayoutParams(
                         ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
             }
@@ -251,9 +256,12 @@ public class ImeService extends InputMethodService
         if (candidateBox == null) return;
         candidateBox.removeAllViews();
 
+        final boolean cn = chinese && !symbolMode;
+        final String buf = cn ? pinyinBuffer : englishBuffer;
+
         TextView tv = new TextView(this);
-        tv.setText(pinyinBuffer.isEmpty() ? "拼音" : pinyinBuffer);
-        tv.setTextColor(pinyinBuffer.isEmpty() ? ThemeHelper.onSurfaceDim : ThemeHelper.accent);
+        tv.setText(buf.isEmpty() ? (cn ? "拼音" : "英文") : buf);
+        tv.setTextColor(buf.isEmpty() ? ThemeHelper.onSurfaceDim : ThemeHelper.accent);
         tv.setTextSize(16);
         tv.setGravity(Gravity.CENTER_VERTICAL);
         tv.setPadding(dp(12), 0, dp(12), 0);
@@ -261,8 +269,12 @@ public class ImeService extends InputMethodService
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT));
 
         candidates.clear();
-        if (!pinyinBuffer.isEmpty()) {
-            candidates = PinyinEngine.get(this).candidates(pinyinBuffer, 24);
+        if (!buf.isEmpty()) {
+            if (cn) {
+                candidates = PinyinEngine.get(this).candidates(buf, 24);
+            } else {
+                candidates = EnglishEngine.get(this).suggest(buf, 24);
+            }
         }
         for (String w : candidates) {
             Button b = new Button(this);
@@ -309,7 +321,7 @@ public class ImeService extends InputMethodService
             LinearLayout row3 = row();
             row3.addView(funcKey("⇧", v -> { caps = !caps; rebuild(); }));
             for (String s : r3) row3.addView(letterKey(s));
-            row3.addView(funcKey("?123", v -> { flushPinyin(); symbolMode = true; rebuild(); }));
+            row3.addView(funcKey("?123", v -> { flushPinyin(); englishBuffer = ""; symbolMode = true; rebuild(); }));
             row3.addView(backspaceKey());
             root.addView(row3);
         }
@@ -338,6 +350,12 @@ public class ImeService extends InputMethodService
             return;
         }
         commit(ch);
+        if (!chinese && !symbolMode) {
+            // 英文模式：字母已上屏，同步记录当前词，用于联想
+            englishBuffer += ch;
+            if (englishBuffer.length() > 24) englishBuffer = "";
+            updateCandidates();
+        }
         if (caps && !symbolMode) {
             caps = false;
             rebuild();
@@ -351,6 +369,10 @@ public class ImeService extends InputMethodService
             return;
         }
         sendDownUpKeyEvents(KeyEvent.KEYCODE_DEL);
+        if (!chinese && !symbolMode && !englishBuffer.isEmpty()) {
+            englishBuffer = englishBuffer.substring(0, englishBuffer.length() - 1);
+            updateCandidates();
+        }
     }
 
     /** 退格键：长按快速删除；长按后上滑松手 = 删除全部文本 */
@@ -427,9 +449,12 @@ public class ImeService extends InputMethodService
 
     private void onEnter() {
         if (chinese && !symbolMode && !pinyinBuffer.isEmpty()) {
-            commitFirstCandidate();
+            // 回车 = 上屏输入的原始字母（而不是首选词），随后照常回车
+            commitRawPinyin();
+            sendDownUpKeyEvents(KeyEvent.KEYCODE_ENTER);
             return;
         }
+        if (!chinese && !symbolMode) resetEnglish();
         sendDownUpKeyEvents(KeyEvent.KEYCODE_ENTER);
     }
 
@@ -438,20 +463,46 @@ public class ImeService extends InputMethodService
             commitFirstCandidate();
         }
         commit(p);
+        if (!chinese && !symbolMode) resetEnglish();
     }
 
     private void toggleLanguage() {
-        if (pinyinBuffer.isEmpty()) chinese = !chinese;
-        else { commitFirstCandidate(); chinese = !chinese; }
+        if (pinyinBuffer.isEmpty()) { /* 无待上屏拼音 */ }
+        else flushPinyin();
+        chinese = !chinese;
         symbolMode = false;
+        englishBuffer = "";
         saveState();
         rebuild();
     }
 
     private void pickCandidate(String w) {
+        if (!chinese || symbolMode) {
+            pickEnglish(w);
+            return;
+        }
         commit(w);
         MemoryStore.record(this, w);
         pinyinBuffer = "";
+        updateCandidates();
+    }
+
+    /** 英文候选：字母已上屏，先删掉已输入的字母再用完整词替换。 */
+    private void pickEnglish(String w) {
+        InputConnection ic = getCurrentInputConnection();
+        if (ic == null || englishBuffer.isEmpty()) return;
+        String out = w;
+        if (Character.isUpperCase(englishBuffer.charAt(0))) {
+            out = Character.toUpperCase(w.charAt(0)) + w.substring(1);
+        }
+        ic.deleteSurroundingText(englishBuffer.length(), 0);
+        ic.commitText(out, 1);
+        MemoryStore.record(this, out);
+        resetEnglish();
+    }
+
+    private void resetEnglish() {
+        englishBuffer = "";
         updateCandidates();
     }
 
@@ -464,12 +515,28 @@ public class ImeService extends InputMethodService
         updateCandidates();
     }
 
+    /** 上屏当前拼音缓冲的原始字母（不做转换）。 */
+    private void commitRawPinyin() {
+        if (pinyinBuffer.isEmpty()) return;
+        String out = caps ? pinyinBuffer.toUpperCase() : pinyinBuffer;
+        commit(out);
+        pinyinBuffer = "";
+        updateCandidates();
+    }
+
+    /** 切换标签/结束输入时：把未转换的拼音按原样上屏，避免用户没选的词被强行打出。 */
     private void flushPinyin() {
-        if (!pinyinBuffer.isEmpty()) commitFirstCandidate();
+        if (!pinyinBuffer.isEmpty()) {
+            String out = pinyinBuffer;
+            commit(out);
+            pinyinBuffer = "";
+            updateCandidates();
+        }
     }
 
     private void resetPinyin() {
         pinyinBuffer = "";
+        englishBuffer = "";
         candidates.clear();
         if (candidateBox != null) updateCandidates();
     }
@@ -737,6 +804,7 @@ public class ImeService extends InputMethodService
             return;
         }
         commit(" ");
+        if (!chinese && !symbolMode) resetEnglish();
     }
 
     private Button funcKey(String label, View.OnClickListener l) {

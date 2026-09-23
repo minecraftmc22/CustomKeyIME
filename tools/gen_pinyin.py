@@ -29,6 +29,21 @@ MAXLEN = 4          # 词最大长度（字）
 MAX_WORDS = 70000   # 最多收录多少词（按词频取前 N）
 MAX_PER_KEY = 10    # 同一拼音最多保留几个候选
 
+# 首字母缩写（简拼）收录范围：词的音节数
+ABBREV_MIN_SYL = 2
+ABBREV_MAX_SYL = 4
+
+# 日常口语词手动加权（jieba 为新闻语料词频，口语词偏低，会导致简拼候选排序靠后）
+BOOST = {w: 1000000 for w in [
+    '你好', '谢谢', '再见', '晚安', '早安', '我们', '你们', '他们', '什么', '怎么',
+    '可以', '现在', '知道', '因为', '所以', '但是', '如果', '这个', '那个', '没有',
+    '已经', '还是', '觉得', '喜欢', '时间', '问题', '工作', '事情', '电话', '手机',
+    '电脑', '明天', '今天', '昨天', '早上', '晚上', '下午', '中午', '吃饭', '睡觉',
+    '回家', '开心', '快乐', '朋友', '老师', '同学', '爸爸', '妈妈', '哥哥', '姐姐',
+    '弟弟', '妹妹', '电影', '音乐', '游戏', '学习', '开始', '结束', '帮助', '希望',
+    '美丽', '可爱', '加油', '好的', '对不起', '没关系', '不客气', '请稍等',
+]}
+
 
 def is_cn(s):
     return all('\u4e00' <= c <= '\u9fff' for c in s)
@@ -55,6 +70,7 @@ def main():
                 except ValueError:
                     pass
     print("总词条:", len(entries))
+    entries = [(w, BOOST.get(w, fr)) for w, fr in entries]
     entries.sort(key=lambda x: -x[1])
 
     cn = [(w, fr) for w, fr in entries if is_cn(w)]
@@ -81,6 +97,22 @@ def main():
             if len(mp[py]) < MAX_PER_KEY:
                 mp[py].append(w)
 
+    # 首字母缩写键（简拼联想）：如 你好 nihao -> nh（kept 已按词频降序，同键候选保持词频序）
+    n_abbrev = 0
+    for w, fr in kept:
+        syls = lazy_pinyin(w)
+        if not (ABBREV_MIN_SYL <= len(syls) <= ABBREV_MAX_SYL):
+            continue
+        ab = norm(''.join(s[:1] for s in syls if s))
+        if ab is None or len(ab) != len(syls):
+            continue
+        if (ab, w) not in seen:
+            seen.add((ab, w))
+            if len(mp[ab]) < MAX_PER_KEY:
+                mp[ab].append(w)
+                n_abbrev += 1
+    print("首字母缩写词条:", n_abbrev)
+
     print("拼音键数量:", len(mp))
 
     os.makedirs(os.path.dirname(OUT), exist_ok=True)
@@ -91,7 +123,8 @@ def main():
     size = os.path.getsize(OUT)
     print("写入:", OUT)
     print("大小: %.2f MB" % (size / 1024 / 1024))
-    for t in ["ni", "hao", "nihao", "wo", "xihuan", "shanghai", "zhongqing", "yinhang"]:
+    for t in ["ni", "hao", "nihao", "wo", "xihuan", "shanghai", "zhongqing", "yinhang",
+              "nh", "xhs", "zgrm", "wy", "xs"]:
         print("  %-10s -> %s" % (t, mp.get(t, [])[:8]))
 
 

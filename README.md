@@ -13,7 +13,10 @@
 
 ### 键盘（4 个标签页 + 设置）
 - **「键盘」标签**：普通 QWERTY 键盘
-  - **中/英切换**：中文模式内置简版拼音输入法（含 4.9 万条拼音词库、切分候选、边打边提示）
+  - **中/英切换**：中文模式内置简版拼音输入法（含 6.1 万拼音键词库、切分候选、边打边提示）
+  - **首字母简拼联想**：中文模式下输入每个字的声母即可联想，如 `nh` → 你好、`xhs` → 新华社
+  - **回车直接上屏所打字母**：中文模式有未转换的拼音时，按回车输出的是你打的字母本身（不是首选词），随后照常回车
+  - **英文模式词语联想**：边打边在候选栏给出前缀联想（`hel` → hello / help），点击即补全整词
   - 数字/符号面板（`?123` 切换）、大小写、退格、空格、回车、中/英文标点
   - **退格长按 = 快速删除**；**长按后上滑松手 = 删除全部文本**
 - **「自定义」标签**：整屏网格面板，按分组排列自定义按键，一点即输入（可自动发送）
@@ -51,10 +54,12 @@ CustomKeyIME/
 ├── app/src/main/
 │   ├── AndroidManifest.xml              # 注册 IME 服务与启动 Activity
 │   ├── assets/
-│   │   └── pinyin.txt                   # 拼音词库（约 0.95 MB，4.9 万拼音键）
+│   │   ├── pinyin.txt                   # 拼音词库（约 1.23 MB，6.1 万拼音键，含首字母简拼键）
+│   │   └── english_words.txt            # 英文词频表（1150 个常用词，按词频降序）
 │   ├── java/com/minecraftmc22/ckime/
 │   │   ├── ImeService.java              # 输入法服务（双模式键盘 + 中英切换 + 自动回车）
 │   │   ├── PinyinEngine.java            # 简版拼音引擎（精确/切分/前缀三种候选）
+│   │   ├── EnglishEngine.java           # 英文联想引擎（前缀匹配 + 词频排序）
 │   │   ├── KeysActivity.java            # 按键管理界面（分组 / 移动 / 增删改）
 │   │   ├── KeyGroup.java                # 分组数据模型
 │   │   ├── CustomKey.java               # 按键数据模型
@@ -77,17 +82,38 @@ ic.commitText("12", 1);                        // 1. 输入内容
 sendDownUpKeyEvents(KeyEvent.KEYCODE_ENTER);   // 2. 自动按回车 → 聊天框即发送
 ```
 
-**② 拼音候选（三种策略叠加）**
+**② 拼音候选（三种策略叠加 + 首字母简拼）**
 
 ```java
 // PinyinEngine.java → candidates()
 1. 精确匹配        nihao      -> 你好
 2. 全串切分        woxihuanni -> 我 + 喜欢 + 你
 3. 前缀匹配        nih        -> 你好 / 你 / 呢 ...
+4. 首字母简拼      nh         -> 你好 / 南海 / 女孩 ...（词库中预生成缩写键）
 ```
 
-词库由 jieba 词频表 + pypinyin 生成（多音字按词组规则处理，如 `银行 → yinhang`、`重庆 → chongqing`），
-生成脚本见 `tools/gen_pinyin.py`。
+**③ 回车 = 上屏所打字母（中文模式）**
+
+```java
+// ImeService.java → onEnter()
+if (chinese && !pinyinBuffer.isEmpty()) {
+    commitRawPinyin();                            // 输出 "nihao"，而不是首选词「你好」
+    sendDownUpKeyEvents(KeyEvent.KEYCODE_ENTER);  // 随后照常回车
+    return;
+}
+```
+
+**④ 英文词语联想**
+
+```java
+// ImeService.java → updateCandidates() + EnglishEngine.suggest()
+// 英文模式每个字母即时上屏，同时用 englishBuffer 跟踪当前词；
+// 候选栏给出前缀匹配（hel -> hello / help / held ...），点击后用完整词替换已输入部分
+```
+
+词库由 jieba 词频表 + pypinyin 生成（多音字按词组规则处理，如 `银行 → yinhang`、`重庆 → chongqing`，
+并对常用口语词手动加权，避免新闻语料词频导致简拼候选排序靠后），
+生成脚本见 `tools/gen_pinyin.py`；英文词表见 `app/src/main/assets/english_words.txt`。
 
 ## 环境要求
 
@@ -104,7 +130,7 @@ sendDownUpKeyEvents(KeyEvent.KEYCODE_ENTER);   // 2. 自动按回车 → 聊天�
 - 构建完成后在仓库 **Actions → 对应运行 → Artifacts** 下载 APK（是 zip，需解压后安装）
 
 ```bash
-git tag v1.4 && git push origin v1.4   # 触发 Release 打包
+git tag v1.6 && git push origin v1.6   # 触发 Release 打包
 ```
 
 ## 常见问题
@@ -113,5 +139,7 @@ git tag v1.4 && git push origin v1.4   # 触发 Release 打包
   action 必须是 `android.view.InputMethod`（不是权限名 `BIND_INPUT_METHOD`）。
 - **有的 App 里回车是换行不是发送？** 这取决于该 App 对回车键的行为定义，本输入法发送的回车与手动按回车完全等价。
 - **中文候选不准/词太少？** 简版词库优先保证常用词；可调整 `tools/gen_pinyin.py` 里的
-  `MAX_WORDS` / `MAX_PER_KEY` 重新生成。
+  `MAX_WORDS` / `MAX_PER_KEY` / `ABBREV_MAX_SYL` 重新生成（`python tools/gen_pinyin.py`）。
+- **英文联想词太少？** 词表就是 `app/src/main/assets/english_words.txt`，按词频降序、每行一个词，
+  直接增删即可（越靠前越优先出现在候选栏）。
 - **想改按键高度/颜色？** 高度在 `ImeService.java` 的 `dp(48)` / `dp(52)`，颜色在 `res/drawable/key_bg*.xml`。
