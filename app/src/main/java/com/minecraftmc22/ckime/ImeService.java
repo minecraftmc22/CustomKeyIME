@@ -160,8 +160,14 @@ public class ImeService extends InputMethodService
         candidateBox = null;
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
-        root.setBackgroundColor(ThemeHelper.background(
-                AppSettings.getBgAlpha(this), AppSettings.getBgBrightness(this)));
+        // 背景：自定义图片（若有）或主题纯色，均受透明度 / 明暗设置影响
+        try {
+            root.setBackground(ThemeHelper.keyboardBackground(this,
+                    AppSettings.getBgAlpha(this), AppSettings.getBgBrightness(this)));
+        } catch (Throwable t) {
+            root.setBackgroundColor(ThemeHelper.background(
+                    AppSettings.getBgAlpha(this), AppSettings.getBgBrightness(this)));
+        }
         root.setPadding(dp(4), dp(4), dp(4), dp(6));
 
         root.addView(buildTabRow(), new LinearLayout.LayoutParams(

@@ -46,6 +46,7 @@ import java.util.Set;
 public class KeysActivity extends Activity {
 
     private static final int REQ_EXPORT_JSON = 1001;
+    private static final int REQ_IMPORT_JSON = 1002;
 
     private List<KeyGroup> groups;
     private Set<String> collapsed = new HashSet<>();
@@ -112,6 +113,7 @@ public class KeysActivity extends Activity {
         findViewById(R.id.btnAddKey).setOnClickListener(v -> showKeyDialog(-1, -1));
         findViewById(R.id.btnAddGroup).setOnClickListener(v -> showNewGroupDialog());
         findViewById(R.id.btnExport).setOnClickListener(v -> showExportDialog());
+        findViewById(R.id.btnImport).setOnClickListener(v -> showImportDialog());
         findViewById(R.id.btnSettings).setOnClickListener(v ->
                 startActivity(new Intent(this, SettingsActivity.class)));
         findViewById(R.id.btnImeSettings).setOnClickListener(v ->
@@ -477,6 +479,7 @@ public class KeysActivity extends Activity {
         String[] items = {
                 getString(R.string.export_to_file),
                 getString(R.string.export_to_text),
+                getString(R.string.export_to_json_text),
                 getString(R.string.export_to_clip),
         };
         new AlertDialog.Builder(this)
@@ -485,7 +488,8 @@ public class KeysActivity extends Activity {
                     switch (which) {
                         case 0: exportToFile(); break;
                         case 1: exportShareText(); break;
-                        case 2: exportToClipboard(); break;
+                        case 2: exportShareJson(); break;
+                        case 3: exportToClipboard(); break;
                     }
                 })
                 .setNegativeButton("取消", null)
@@ -519,6 +523,19 @@ public class KeysActivity extends Activity {
         }
     }
 
+    /** 分享 JSON 文本：对方复制后可在「导入 → 从剪贴板导入」直接还原。 */
+    private void exportShareJson() {
+        Intent it = new Intent(Intent.ACTION_SEND)
+                .setType("text/plain")
+                .putExtra(Intent.EXTRA_SUBJECT, "自定义按键导出（JSON）")
+                .putExtra(Intent.EXTRA_TEXT, KeyBackup.toJson(this));
+        try {
+            startActivity(Intent.createChooser(it, "分享自定义按键 JSON"));
+        } catch (Throwable t) {
+            Toast.makeText(this, "没有可用的分享目标", Toast.LENGTH_SHORT).show();
+        }
+    }
+
     private void exportToClipboard() {
         String json = KeyBackup.toJson(this);
         ClipboardManager cm = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
@@ -531,21 +548,151 @@ public class KeysActivity extends Activity {
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
-        if (requestCode != REQ_EXPORT_JSON) return;
         if (resultCode != RESULT_OK || data == null || data.getData() == null) return;
         Uri uri = data.getData();
-        OutputStream os = null;
-        try {
-            os = getContentResolver().openOutputStream(uri, "wt");
-            if (os == null) throw new Exception("无法打开目标文件");
-            os.write(KeyBackup.toJson(this).getBytes("UTF-8"));
-            os.flush();
-            Toast.makeText(this, "导出成功", Toast.LENGTH_SHORT).show();
-        } catch (Throwable t) {
-            Toast.makeText(this, "导出失败：" + t.getMessage(), Toast.LENGTH_LONG).show();
-        } finally {
-            try { if (os != null) os.close(); } catch (Throwable ignored) {}
+
+        if (requestCode == REQ_EXPORT_JSON) {
+            OutputStream os = null;
+            try {
+                os = getContentResolver().openOutputStream(uri, "wt");
+                if (os == null) throw new Exception("无法打开目标文件");
+                os.write(KeyBackup.toJson(this).getBytes("UTF-8"));
+                os.flush();
+                Toast.makeText(this, "导出成功", Toast.LENGTH_SHORT).show();
+            } catch (Throwable t) {
+                Toast.makeText(this, "导出失败：" + t.getMessage(), Toast.LENGTH_LONG).show();
+            } finally {
+                try { if (os != null) os.close(); } catch (Throwable ignored) {}
+            }
+            return;
         }
+
+        if (requestCode == REQ_IMPORT_JSON) {
+            java.io.InputStream is = null;
+            try {
+                is = getContentResolver().openInputStream(uri);
+                if (is == null) throw new Exception("无法读取该文件");
+                java.io.ByteArrayOutputStream bos = new java.io.ByteArrayOutputStream();
+                byte[] buf = new byte[8192];
+                int n;
+                while ((n = is.read(buf)) > 0) bos.write(buf, 0, n);
+                applyImport(new String(bos.toByteArray(), "UTF-8"));
+            } catch (Throwable t) {
+                Toast.makeText(this, "读取失败：" + t.getMessage(), Toast.LENGTH_LONG).show();
+            } finally {
+                try { if (is != null) is.close(); } catch (Throwable ignored) {}
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // 导入
+    // ------------------------------------------------------------------
+
+    private void showImportDialog() {
+        String[] items = {
+                getString(R.string.import_from_file),
+                getString(R.string.import_from_clip),
+        };
+        new AlertDialog.Builder(this)
+                .setTitle(R.string.import_title)
+                .setItems(items, (d, which) -> {
+                    if (which == 0) importFromFile();
+                    else importFromClipboard();
+                })
+                .setNegativeButton("取消", null)
+                .show();
+    }
+
+    private void importFromFile() {
+        Intent it = new Intent(Intent.ACTION_OPEN_DOCUMENT)
+                .addCategory(Intent.CATEGORY_OPENABLE)
+                .setType("*/*")
+                .putExtra(Intent.EXTRA_MIME_TYPES,
+                        new String[]{"application/json", "text/plain", "application/octet-stream"});
+        try {
+            startActivityForResult(it, REQ_IMPORT_JSON);
+        } catch (Throwable t) {
+            Toast.makeText(this, "当前系统没有可用的文件选择器", Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private void importFromClipboard() {
+        ClipboardManager cm = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
+        if (cm == null || !cm.hasPrimaryClip() || cm.getPrimaryClip() == null
+                || cm.getPrimaryClip().getItemCount() == 0) {
+            Toast.makeText(this, "剪贴板里没有内容", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        ClipData.Item item = cm.getPrimaryClip().getItemAt(0);
+        CharSequence cs = item.coerceToText(this);
+        applyImport(cs == null ? "" : cs.toString());
+    }
+
+    /** 解析内容并让用户选择「合并」或「替换」。 */
+    private void applyImport(String raw) {
+        final KeyBackup.Backup bk;
+        try {
+            bk = KeyBackup.parse(raw);
+        } catch (Throwable t) {
+            Toast.makeText(this, "导入失败：" + t.getMessage(), Toast.LENGTH_LONG).show();
+            return;
+        }
+        if (bk.groups.isEmpty()) {
+            Toast.makeText(this, "没有可导入的内容", Toast.LENGTH_SHORT).show();
+            return;
+        }
+
+        String msg = "共 " + bk.groups.size() + " 组 / " + bk.keyCount() + " 个按键。\n\n"
+                + "「合并到现有」：同名分组追加按键（自动跳过重复），新分组直接添加；\n"
+                + "「替换全部」：清空当前所有分组与按键后再导入。";
+
+        new AlertDialog.Builder(this)
+                .setTitle("导入方式")
+                .setMessage(msg)
+                .setPositiveButton(R.string.import_merge, (d, w) -> doImportMerge(bk))
+                .setNeutralButton(R.string.import_replace, (d, w) -> doImportReplace(bk))
+                .setNegativeButton("取消", null)
+                .show();
+    }
+
+    private void doImportReplace(KeyBackup.Backup bk) {
+        groups.clear();
+        groups.addAll(bk.groups);
+        KeyStore.saveCollapsed(this, bk.collapsed);
+        save();
+        Toast.makeText(this, "已替换为导入的 " + groups.size() + " 组按键",
+                Toast.LENGTH_SHORT).show();
+    }
+
+    private void doImportMerge(KeyBackup.Backup bk) {
+        int addedGroups = 0;
+        int addedKeys = 0;
+        int skipped = 0;
+        for (KeyGroup in : bk.groups) {
+            KeyGroup target = null;
+            for (KeyGroup g : groups) {
+                if (g.name.equals(in.name)) { target = g; break; }
+            }
+            if (target == null) {
+                target = new KeyGroup(in.name);
+                groups.add(target);
+                addedGroups++;
+            }
+            for (CustomKey k : in.keys) {
+                boolean dup = false;
+                for (CustomKey e : target.keys) {
+                    if (e.text.equals(k.text) && e.autoEnter == k.autoEnter) { dup = true; break; }
+                }
+                if (dup) { skipped++; continue; }
+                target.keys.add(new CustomKey(k.text, k.autoEnter, target.name));
+                addedKeys++;
+            }
+        }
+        save();
+        Toast.makeText(this, "导入完成：新增 " + addedGroups + " 组 / " + addedKeys
+                        + " 个按键" + (skipped > 0 ? "，跳过重复 " + skipped + " 个" : ""),
+                Toast.LENGTH_LONG).show();
     }
 
     // ------------------------------------------------------------------

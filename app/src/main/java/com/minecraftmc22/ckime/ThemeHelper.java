@@ -2,7 +2,16 @@ package com.minecraftmc22.ckime;
 
 import android.content.Context;
 import android.graphics.Color;
+import android.graphics.drawable.BitmapDrawable;
+import android.graphics.drawable.ColorDrawable;
+import android.graphics.drawable.Drawable;
+import android.graphics.drawable.GradientDrawable;
+import android.graphics.drawable.LayerDrawable;
+import android.net.Uri;
 import android.os.Build;
+import android.view.Gravity;
+
+import java.io.InputStream;
 
 /**
  * Material You 3 配色。
@@ -54,6 +63,77 @@ public final class ThemeHelper {
     public static int background(int alpha, int brightness) {
         int base = applyBrightness(surface, brightness);
         return withAlpha(base, alpha);
+    }
+
+    /**
+     * 键盘背景 Drawable：
+     *  - 设置了自定义背景图片 → 图片（透明度 + 明暗叠加层）
+     *  - 未设置 → 主题纯色背景
+     */
+    public static Drawable keyboardBackground(Context c, int alpha, int brightness) {
+        Drawable img = customImage(c);
+        if (img == null) {
+            GradientDrawable g = new GradientDrawable();
+            g.setColor(background(alpha, brightness));
+            return g;
+        }
+        try {
+            if (brightness != 0) {
+                // 用半透明黑/白叠加模拟明暗（图片本身不好直接改明度）
+                int k = Math.round(Math.abs(brightness) * 255f / 100f * 0.7f);
+                int overlay = brightness > 0
+                        ? withAlpha(Color.WHITE, k)
+                        : withAlpha(Color.BLACK, k);
+                LayerDrawable ld = new LayerDrawable(
+                        new Drawable[]{img, new ColorDrawable(overlay)});
+                ld.setAlpha(clampAlpha(alpha));
+                return ld;
+            }
+            Drawable d = img.mutate();
+            d.setAlpha(clampAlpha(alpha));
+            return d;
+        } catch (Throwable t) {
+            GradientDrawable g = new GradientDrawable();
+            g.setColor(background(alpha, brightness));
+            return g;
+        }
+    }
+
+    /** 读取用户选择的背景图片；未设置或读取失败返回 null。 */
+    public static Drawable customImage(Context c) {
+        String uri = AppSettings.getBgImageUri(c);
+        if (uri == null || uri.isEmpty()) return null;
+        try {
+            return customImage(c, Uri.parse(uri));
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
+    /** 读取指定 Uri 的图片（用于设置页预览 / 校验）。失败返回 null。 */
+    public static Drawable customImage(Context c, Uri uri) {
+        if (uri == null) return null;
+        InputStream in = null;
+        try {
+            in = c.getContentResolver().openInputStream(uri);
+            if (in == null) return null;
+            Drawable d = Drawable.createFromStream(in, "ckime-bg");
+            if (d instanceof BitmapDrawable) {
+                BitmapDrawable bd = (BitmapDrawable) d;
+                bd.setGravity(Gravity.FILL);
+                bd.setFilterBitmap(true);
+                bd.setDither(true);
+            }
+            return d;
+        } catch (Throwable t) {
+            return null;
+        } finally {
+            try { if (in != null) in.close(); } catch (Throwable ignored) {}
+        }
+    }
+
+    private static int clampAlpha(int a) {
+        return a < 0 ? 0 : (a > 255 ? 255 : a);
     }
 
     /** 明暗调节（-100~+100），基于 HSV 明度 */

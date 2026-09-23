@@ -7,7 +7,9 @@ import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.text.SimpleDateFormat;
+import java.util.ArrayList;
 import java.util.Date;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
@@ -92,6 +94,67 @@ public class KeyBackup {
             }
         }
         return sb.toString();
+    }
+
+    // ------------------------------------------------------------------
+    // 导入（解析）
+    // ------------------------------------------------------------------
+
+    /** 解析结果：分组 + 折叠状态。 */
+    public static class Backup {
+        public final List<KeyGroup> groups = new ArrayList<>();
+        public final Set<String> collapsed = new HashSet<>();
+
+        public int keyCount() {
+            int n = 0;
+            for (KeyGroup g : groups) n += g.keys.size();
+            return n;
+        }
+    }
+
+    /**
+     * 解析导出的 JSON（也兼容「SharedPreferences 里的原始格式」：只有 groups 没有 format）。
+     * @throws JSONException 内容不是合法 JSON 或缺少 groups 字段
+     */
+    public static Backup parse(String json) throws JSONException {
+        if (json == null) throw new JSONException("内容为空");
+        String s = json.trim();
+        if (s.isEmpty()) throw new JSONException("内容为空");
+        // 容忍前后有说明文字：截取第一个 { 到最后一个 }
+        int a = s.indexOf('{');
+        int b = s.lastIndexOf('}');
+        if (a < 0 || b <= a) throw new JSONException("没有找到 JSON 内容");
+        s = s.substring(a, b + 1);
+
+        JSONObject root = new JSONObject(s);
+        JSONArray ga = root.optJSONArray("groups");
+        if (ga == null) throw new JSONException("缺少 groups 字段，可能不是本输入法的导出文件");
+
+        Backup out = new Backup();
+        for (int i = 0; i < ga.length(); i++) {
+            JSONObject go = ga.optJSONObject(i);
+            if (go == null) continue;
+            String name = go.optString("name", KeyStore.DEFAULT_GROUP);
+            if (name == null || name.trim().isEmpty()) name = KeyStore.DEFAULT_GROUP;
+            name = name.trim();
+
+            KeyGroup kg = new KeyGroup(name);
+            if (go.optBoolean("collapsed", false)) out.collapsed.add(name);
+
+            JSONArray ka = go.optJSONArray("keys");
+            if (ka != null) {
+                for (int j = 0; j < ka.length(); j++) {
+                    JSONObject ko = ka.optJSONObject(j);
+                    if (ko == null) continue;
+                    String text = ko.optString("text", "");
+                    if (text == null || text.isEmpty()) continue;
+                    kg.keys.add(new CustomKey(text, ko.optBoolean("autoEnter", true), name));
+                }
+            }
+            out.groups.add(kg);
+        }
+        if (out.groups.isEmpty()) throw new JSONException("文件里没有任何分组");
+        return out;
     }
 
     // ------------------------------------------------------------------

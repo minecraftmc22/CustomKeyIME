@@ -126,5 +126,62 @@
             android:layout_height="wrap_content"
             android:layout_marginTop="28dp"
             android:text="@string/settings_reset" />
+
+        <!-- 自定义背景图片 -->
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="28dp"
+            android:text="@string/settings_bg_image"
+            android:textColor="#FFEEEEEE"
+            android:textSize="16sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:lineSpacingExtra="3dp"
+            android:text="@string/settings_bg_image_desc"
+            android:textColor="#FF9AA0A6"
+            android:textSize="13sp" />
+
+        <View
+            android:id="@+id/bgPreview"
+            android:layout_width="match_parent"
+            android:layout_height="96dp"
+            android:layout_marginTop="10dp"
+            android:background="#FF1C1C22" />
+
+        <TextView
+            android:id="@+id/tvBgState"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:text="@string/settings_bg_none"
+            android:textColor="#FF80CBC4"
+            android:textSize="13sp" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:orientation="horizontal">
+
+            <Button
+                android:id="@+id/btnPickBg"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="@string/settings_bg_pick" />
+
+            <Button
+                android:id="@+id/btnClearBg"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="8dp"
+                android:layout_weight="1"
+                android:text="@string/settings_bg_clear" />
+        </LinearLayout>
     </LinearLayout>
 </ScrollView>
