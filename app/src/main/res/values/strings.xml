@@ -1,10 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">自定义按键输入法</string>
-    <string name="guide_desc">添加快捷按键后，在任意输入框切换到本输入法，点击键盘顶部的自定义按键，即可自动输入内容并按回车发送。\n\n启用方法：系统设置 → 语言和输入法（或「虚拟键盘 / 管理键盘」）→ 开启并选择「自定义按键输入法」。</string>
-    <string name="open_ime_settings">去系统设置启用本输入法</string>
+    <string name="keys_guide">分组管理你的快捷按键。每个按键支持上移/下移/跨组移动，保存后键盘顶部立即生效。\n\n系统设置 → 语言和输入法 → 虚拟键盘 / 管理键盘 → 启用「自定义按键输入法」。</string>
+    <string name="open_ime_settings">去系统设置启用</string>
     <string name="pick_ime">切换为当前输入法</string>
-    <string name="add_key">＋ 新建自定义按键</string>
-    <string name="empty_hint">还没有自定义按键\n点击下方按钮新建一个</string>
-    <string name="item_hint">点击编辑 · 长按删除</string>
+    <string name="add_key">＋ 新建按键</string>
+    <string name="add_group">＋ 新建分组</string>
+    <string name="no_keys">还没有任何按键\n点击下方按钮新建，或在分组上点 ＋</string>
 </resources>

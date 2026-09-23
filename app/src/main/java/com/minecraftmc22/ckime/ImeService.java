@@ -137,7 +137,7 @@ public class ImeService extends InputMethodService
         return root;
     }
 
-    /** 填充顶部自定义按键行 */
+    /** 填充顶部自定义按键行（按分组顺序拼接，组与组之间插入竖线分隔） */
     private void populateCustomRow() {
         if (customRow == null) return;
         customRow.removeAllViews();
@@ -148,21 +148,34 @@ public class ImeService extends InputMethodService
         hide.setOnClickListener(v -> requestHideSelf(0));
         customRow.addView(hide, wrapParams());
 
-        // 所有自定义按键
-        List<CustomKey> keys = KeyStore.load(this);
-        for (CustomKey k : keys) {
-            Button b = makeKey(k.text + (k.autoEnter ? " ↵" : ""));
-            b.setBackgroundResource(R.drawable.key_bg_custom);
-            b.setSingleLine(true);
-            b.setEllipsize(TextUtils.TruncateAt.END);
-            b.setOnClickListener(v -> fireCustomKey(k));
-            customRow.addView(b, wrapParams());
+        // 所有自定义按键（带分组信息）
+        List<KeyGroup> groups = KeyStore.loadGroups(this);
+        boolean firstGroup = true;
+        for (KeyGroup g : groups) {
+            if (g.keys.isEmpty()) continue;
+            if (!firstGroup) {
+                // 组间分隔：细竖线
+                View sep = new View(this);
+                sep.setBackgroundColor(0xFF3A3A40);
+                LinearLayout.LayoutParams slp = new LinearLayout.LayoutParams(dp(1), dp(36));
+                slp.setMargins(dp(6), dp(6), dp(6), dp(6));
+                customRow.addView(sep, slp);
+            }
+            firstGroup = false;
+            for (CustomKey k : g.keys) {
+                Button b = makeKey(k.text + (k.autoEnter ? " ↵" : ""));
+                b.setBackgroundResource(R.drawable.key_bg_custom);
+                b.setSingleLine(true);
+                b.setEllipsize(TextUtils.TruncateAt.END);
+                b.setOnClickListener(v -> fireCustomKey(k));
+                customRow.addView(b, wrapParams());
+            }
         }
 
-        // 打开设置
+        // 打开按键管理界面
         Button add = makeKey("＋ 设置");
         add.setOnClickListener(v ->
-                startActivity(new Intent(this, SettingsActivity.class)
+                startActivity(new Intent(this, KeysActivity.class)
                         .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)));
         customRow.addView(add, wrapParams());
     }

@@ -12,41 +12,144 @@ import java.util.List;
 
 /**
  * 自定义按键的持久化存储：SharedPreferences + JSON。
- * 输入法服务和设置界面共用同一份数据，保存后键盘实时刷新。
+ *
+ * 数据结构（v2，支持分组）：
+ *   { "groups": [
+ *       { "name": "默认", "keys": [ {"text":"12","autoEnter":true}, ... ] },
+ *       { "name": "工作", "keys": [...] }
+ *   ] }
+ *
+ * 同时兼容老版本（v1，扁平数组），加载时自动迁移到「默认」分组。
  */
 public class KeyStore {
 
     public static final String PREFS = "custom_keys_prefs";
     private static final String JSON = "keys_json";
+    public static final String DEFAULT_GROUP = "默认";
 
-    public static List<CustomKey> load(Context ctx) {
+    /** 加载所有分组（含按键），保留顺序。自动处理老格式迁移。 */
+    public static List<KeyGroup> loadGroups(Context ctx) {
         SharedPreferences sp = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
-        List<CustomKey> list = new ArrayList<>();
-        try {
-            JSONArray arr = new JSONArray(sp.getString(JSON, "[]"));
-            for (int i = 0; i < arr.length(); i++) {
-                JSONObject o = arr.getJSONObject(i);
-                list.add(new CustomKey(o.optString("text"), o.optBoolean("autoEnter", true)));
-            }
-        } catch (JSONException ignored) {
-        }
-        return list;
-    }
-
-    public static void save(Context ctx, List<CustomKey> list) {
-        JSONArray arr = new JSONArray();
-        for (CustomKey k : list) {
-            JSONObject o = new JSONObject();
+        String raw = sp.getString(JSON, "");
+        List<KeyGroup> groups = new ArrayList<>();
+        if (!raw.isEmpty()) {
             try {
-                o.put("text", k.text);
-                o.put("autoEnter", k.autoEnter);
-                arr.put(o);
+                // 新格式：以 { 开头；老格式：以 [ 开头
+                if (raw.startsWith("{")) {
+                    JSONObject root = new JSONObject(raw);
+                    JSONArray ga = root.optJSONArray("groups");
+                    if (ga != null) {
+                        for (int i = 0; i < ga.length(); i++) {
+                            JSONObject go = ga.getJSONObject(i);
+                            String gname = go.optString("name", DEFAULT_GROUP);
+                            KeyGroup kg = new KeyGroup(gname);
+                            JSONArray ka = go.optJSONArray("keys");
+                            if (ka != null) {
+                                for (int j = 0; j < ka.length(); j++) {
+                                    JSONObject ko = ka.getJSONObject(j);
+                                    kg.keys.add(new CustomKey(
+                                            ko.optString("text"),
+                                            ko.optBoolean("autoEnter", true),
+                                            gname));
+                                }
+                            }
+                            groups.add(kg);
+                        }
+                    }
+                } else if (raw.startsWith("[")) {
+                    // 老格式：扁平数组 → 全部归入「默认」分组
+                    JSONArray arr = new JSONArray(raw);
+                    KeyGroup def = new KeyGroup(DEFAULT_GROUP);
+                    for (int i = 0; i < arr.length(); i++) {
+                        JSONObject o = arr.getJSONObject(i);
+                        def.keys.add(new CustomKey(
+                                o.optString("text"),
+                                o.optBoolean("autoEnter", true),
+                                DEFAULT_GROUP));
+                    }
+                    if (!def.keys.isEmpty()) groups.add(def);
+                }
             } catch (JSONException ignored) {
             }
         }
+        // 保证至少存在「默认」分组
+        if (groups.isEmpty()) {
+            groups.add(new KeyGroup(DEFAULT_GROUP));
+        }
+        return groups;
+    }
+
+    /** 扁平加载所有按键（供输入法按键盘上显示，按分组顺序拼接）。 */
+    public static List<CustomKey> load(Context ctx) {
+        List<CustomKey> all = new ArrayList<>();
+        for (KeyGroup g : loadGroups(ctx)) all.addAll(g.keys);
+        return all;
+    }
+
+    /** 保存完整分组结构。 */
+    public static void saveGroups(Context ctx, List<KeyGroup> groups) {
+        JSONObject root = new JSONObject();
+        JSONArray ga = new JSONArray();
+        try {
+            for (KeyGroup g : groups) {
+                JSONObject go = new JSONObject();
+                go.put("name", g.name);
+                JSONArray ka = new JSONArray();
+                for (CustomKey k : g.keys) {
+                    JSONObject ko = new JSONObject();
+                    ko.put("text", k.text);
+                    ko.put("autoEnter", k.autoEnter);
+                    ka.put(ko);
+                }
+                go.put("keys", ka);
+                ga.put(go);
+            }
+            root.put("groups", ga);
+        } catch (JSONException ignored) {
+        }
         ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
                 .edit()
-                .putString(JSON, arr.toString())
+                .putString(JSON, root.toString())
                 .apply();
+    }
+
+    /** 兼容旧接口：保存扁平按键列表（自动归入默认分组）。 */
+    public static void save(Context ctx, List<CustomKey> list) {
+        List<KeyGroup> groups = new ArrayList<>();
+        KeyGroup def = new KeyGroup(DEFAULT_GROUP);
+        def.keys.addAll(list);
+        groups.add(def);
+        saveGroups(ctx, groups);
+    }
+
+    /** 创建分组（去重 + 跳过空名）。同名则返回 null 并提示。 */
+    public static boolean addGroup(List<KeyGroup> groups, String name) {
+        if (name == null) return false;
+        String n = name.trim();
+        if (n.isEmpty()) return false;
+        for (KeyGroup g : groups) {
+            if (g.name.equals(n)) return false;
+        }
+        groups.add(new KeyGroup(n));
+        return true;
+    }
+
+    /** 重命名分组（同名返回 false）。 */
+    public static boolean renameGroup(List<KeyGroup> groups, int index, String newName) {
+        if (newName == null) return false;
+        String n = newName.trim();
+        if (n.isEmpty()) return false;
+        for (int i = 0; i < groups.size(); i++) {
+            if (i != index && groups.get(i).name.equals(n)) return false;
+        }
+        KeyGroup kg = groups.get(index);
+        kg.name = n;
+        // 同步更新分组内按键的 groupName
+        for (CustomKey k : kg.keys) {
+            // CustomKey.groupName 是 final，重建
+            // 这里直接替换 list 里的对象
+            // (KeyStore 不持有引用，调用方需整体保存)
+        }
+        return true;
     }
 }

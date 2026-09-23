@@ -7,9 +7,9 @@
         android:theme="@style/Theme.CustomKeyIME"
         android:allowBackup="true">
 
-        <!-- 设置界面：新建 / 编辑 / 删除自定义按键 -->
+        <!-- 按键管理界面：分组 / 新建 / 编辑 / 删除 / 移动 -->
         <activity
-            android:name=".SettingsActivity"
+            android:name=".KeysActivity"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

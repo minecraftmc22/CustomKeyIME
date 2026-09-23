@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="horizontal"
+    android:gravity="center_vertical"
+    android:background="#FF1F1F25"
+    android:paddingStart="14dp"
+    android:paddingEnd="6dp"
+    android:paddingTop="8dp"
+    android:paddingBottom="8dp">
+
+    <TextView
+        android:id="@+id/tvGroupName"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:textColor="#FF80CBC4"
+        android:textSize="14sp"
+        android:textStyle="bold" />
+
+    <TextView
+        android:id="@+id/tvGroupCount"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="6dp"
+        android:textColor="#FF6B7075"
+        android:textSize="12sp" />
+
+    <View
+        android:layout_width="0dp"
+        android:layout_height="1dp"
+        android:layout_weight="1" />
+
+    <Button
+        android:id="@+id/btnAddKeyHere"
+        android:layout_width="40dp"
+        android:layout_height="40dp"
+        android:text="＋"
+        android:textColor="#FF80CBC4"
+        android:textSize="18sp"
+        android:background="@drawable/key_bg_func"
+        android:padding="0dp"
+        android:minWidth="0dp"
+        android:minHeight="0dp" />
+
+    <Button
+        android:id="@+id/btnGroupMenu"
+        android:layout_width="40dp"
+        android:layout_height="40dp"
+        android:layout_marginStart="4dp"
+        android:text="⋯"
+        android:textColor="#FF9AA0A6"
+        android:textSize="18sp"
+        android:background="@drawable/key_bg_func"
+        android:padding="0dp"
+        android:minWidth="0dp"
+        android:minHeight="0dp" />
+</LinearLayout>
