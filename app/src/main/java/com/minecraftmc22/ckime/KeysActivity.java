@@ -2,9 +2,12 @@ package com.minecraftmc22.ckime;
 
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.content.ClipData;
+import android.content.ClipboardManager;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
+import android.net.Uri;
 import android.os.Bundle;
 import android.provider.Settings;
 import android.view.LayoutInflater;
@@ -22,22 +25,30 @@ import android.widget.PopupMenu;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import java.io.OutputStream;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 /**
  * 自定义按键管理（独立界面）。
  *
  * 特性：
  *  - 多个分组：每个分组有名称、独立的顺序；可新建 / 重命名 / 删除
+ *  - 分组可折叠：点击分组栏（或 ⋯ 菜单）即可折叠 / 展开，状态会保存并在键盘面板同步生效
  *  - 按键上下移动：每个按键行内嵌 ▲ / ▼ 按钮，立即生效
  *  - 按键跨组移动：按键 ⋯ 菜单 → 移动到分组（含「+ 新分组」）
+ *  - 导出自定义按键：JSON 文件（备份 / 迁移）、文本分享、复制到剪贴板
  *  - 输入法启用状态：顶部状态栏实时显示 + 一键启用 / 切换入口
  *  - 与键盘 IME 实时联动：保存后键盘顶部按键行立即刷新（通过 onSharedPreferenceChanged）
  */
 public class KeysActivity extends Activity {
 
+    private static final int REQ_EXPORT_JSON = 1001;
+
     private List<KeyGroup> groups;
+    private Set<String> collapsed = new HashSet<>();
     private final List<Row> rows = new ArrayList<>();
     private BaseAdapter adapter;
     private TextView tvEmpty;
@@ -100,6 +111,7 @@ public class KeysActivity extends Activity {
 
         findViewById(R.id.btnAddKey).setOnClickListener(v -> showKeyDialog(-1, -1));
         findViewById(R.id.btnAddGroup).setOnClickListener(v -> showNewGroupDialog());
+        findViewById(R.id.btnExport).setOnClickListener(v -> showExportDialog());
         findViewById(R.id.btnSettings).setOnClickListener(v ->
                 startActivity(new Intent(this, SettingsActivity.class)));
         findViewById(R.id.btnImeSettings).setOnClickListener(v ->
@@ -132,17 +144,33 @@ public class KeysActivity extends Activity {
         Button btnAdd = v.findViewById(R.id.btnAddKeyHere);
         Button btnMenu = v.findViewById(R.id.btnGroupMenu);
 
-        tvName.setText(row.group.name);
-        tvCount.setText("(" + row.group.keys.size() + ")");
+        final boolean isCollapsed = collapsed.contains(row.group.name);
+        tvName.setText((isCollapsed ? "▸ " : "▾ ") + row.group.name);
+        tvCount.setText(isCollapsed
+                ? "(" + row.group.keys.size() + " · 已折叠)"
+                : "(" + row.group.keys.size() + ")");
 
         final int gi = row.groupIdx;
         btnAdd.setOnClickListener(vv -> showKeyDialog(gi, -1));
         btnMenu.setOnClickListener(vv -> showGroupMenu(vv, gi));
+        // 点击分组栏 = 折叠 / 展开
+        v.setOnClickListener(vv -> toggleCollapse(gi));
         v.setOnLongClickListener(vv -> {
             showGroupMenu(btnMenu, gi);
             return true;
         });
         return v;
+    }
+
+    /** 折叠 / 展开某个分组（状态持久化，键盘面板同步生效）。 */
+    private void toggleCollapse(int gi) {
+        KeyGroup g = groups.get(gi);
+        boolean toCollapse = !collapsed.contains(g.name);
+        KeyStore.setCollapsed(this, g.name, toCollapse);
+        rebuildRows();
+        refresh();
+        Toast.makeText(this, toCollapse ? "已折叠「" + g.name + "」" : "已展开「" + g.name + "」",
+                Toast.LENGTH_SHORT).show();
     }
 
     private View bindKey(Row row, View cv, ViewGroup parent) {
@@ -182,10 +210,12 @@ public class KeysActivity extends Activity {
     // ------------------------------------------------------------------
 
     private void rebuildRows() {
+        collapsed = KeyStore.loadCollapsed(this);
         rows.clear();
         for (int gi = 0; gi < groups.size(); gi++) {
             KeyGroup g = groups.get(gi);
             rows.add(new Row(TYPE_GROUP, gi, -1, g, null));
+            if (collapsed.contains(g.name)) continue;   // 折叠的分组不显示按键行
             for (int ki = 0; ki < g.keys.size(); ki++) {
                 rows.add(new Row(TYPE_KEY, gi, ki, g, g.keys.get(ki)));
             }
@@ -320,10 +350,12 @@ public class KeysActivity extends Activity {
                 .setView(box)
                 .setPositiveButton("保存", (d, w) -> {
                     String n = et.getText().toString();
+                    String oldName = groups.get(gi).name;
                     // 因为 groupName 同步在 save() 里完成，这里只更新 group.name
                     if (!KeyStore.renameGroup(groups, gi, n)) {
                         Toast.makeText(this, "名称无效或已存在", Toast.LENGTH_SHORT).show();
                     } else {
+                        KeyStore.renameCollapsed(this, oldName, groups.get(gi).name);
                         save();
                     }
                 })
@@ -347,6 +379,7 @@ public class KeysActivity extends Activity {
                 .setTitle("删除分组")
                 .setMessage(msg)
                 .setPositiveButton("删除", (d, w) -> {
+                    KeyStore.removeCollapsed(this, groups.get(gi).name);
                     groups.remove(gi);
                     if (groups.isEmpty()) groups.add(new KeyGroup(KeyStore.DEFAULT_GROUP));
                     save();
@@ -363,12 +396,14 @@ public class KeysActivity extends Activity {
         PopupMenu pm = new PopupMenu(this, anchor);
         pm.getMenu().add(0, 1, 0, "新建按键到本组");
         pm.getMenu().add(0, 2, 1, "重命名分组");
-        pm.getMenu().add(0, 3, 2, "删除分组");
+        pm.getMenu().add(0, 4, 2, collapsed.contains(groups.get(gi).name) ? "展开本组" : "折叠本组");
+        pm.getMenu().add(0, 3, 3, "删除分组");
         pm.setOnMenuItemClickListener(item -> {
             switch (item.getItemId()) {
                 case 1: showKeyDialog(gi, -1); return true;
                 case 2: renameGroupDialog(gi); return true;
                 case 3: deleteGroupConfirm(gi); return true;
+                case 4: toggleCollapse(gi); return true;
             }
             return false;
         });
@@ -426,6 +461,91 @@ public class KeysActivity extends Activity {
             return false;
         });
         pm.show();
+    }
+
+    // ------------------------------------------------------------------
+    // 导出
+    // ------------------------------------------------------------------
+
+    private void showExportDialog() {
+        boolean hasKey = false;
+        for (KeyGroup g : groups) if (!g.keys.isEmpty()) { hasKey = true; break; }
+        if (!hasKey) {
+            Toast.makeText(this, "还没有任何按键可导出", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        String[] items = {
+                getString(R.string.export_to_file),
+                getString(R.string.export_to_text),
+                getString(R.string.export_to_clip),
+        };
+        new AlertDialog.Builder(this)
+                .setTitle(R.string.export_title)
+                .setItems(items, (d, which) -> {
+                    switch (which) {
+                        case 0: exportToFile(); break;
+                        case 1: exportShareText(); break;
+                        case 2: exportToClipboard(); break;
+                    }
+                })
+                .setNegativeButton("取消", null)
+                .show();
+    }
+
+    /** 用系统文件选择器（SAF）保存为 .json，无需任何存储权限。 */
+    private void exportToFile() {
+        Intent it = new Intent(Intent.ACTION_CREATE_DOCUMENT)
+                .addCategory(Intent.CATEGORY_OPENABLE)
+                .setType("application/json")
+                .putExtra(Intent.EXTRA_TITLE, KeyBackup.suggestFileName());
+        try {
+            startActivityForResult(it, REQ_EXPORT_JSON);
+        } catch (Throwable t) {
+            Toast.makeText(this, "当前系统不支持选择保存位置，可改用「复制到剪贴板」",
+                    Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private void exportShareText() {
+        String text = KeyBackup.toText(this);
+        Intent it = new Intent(Intent.ACTION_SEND)
+                .setType("text/plain")
+                .putExtra(Intent.EXTRA_SUBJECT, "自定义按键导出")
+                .putExtra(Intent.EXTRA_TEXT, text);
+        try {
+            startActivity(Intent.createChooser(it, "分享自定义按键"));
+        } catch (Throwable t) {
+            Toast.makeText(this, "没有可用的分享目标", Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    private void exportToClipboard() {
+        String json = KeyBackup.toJson(this);
+        ClipboardManager cm = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
+        if (cm == null) return;
+        cm.setPrimaryClip(ClipData.newPlainText("ckime-keys", json));
+        Toast.makeText(this, "已复制 " + json.length() + " 字符到剪贴板",
+                Toast.LENGTH_SHORT).show();
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode != REQ_EXPORT_JSON) return;
+        if (resultCode != RESULT_OK || data == null || data.getData() == null) return;
+        Uri uri = data.getData();
+        OutputStream os = null;
+        try {
+            os = getContentResolver().openOutputStream(uri, "wt");
+            if (os == null) throw new Exception("无法打开目标文件");
+            os.write(KeyBackup.toJson(this).getBytes("UTF-8"));
+            os.flush();
+            Toast.makeText(this, "导出成功", Toast.LENGTH_SHORT).show();
+        } catch (Throwable t) {
+            Toast.makeText(this, "导出失败：" + t.getMessage(), Toast.LENGTH_LONG).show();
+        } finally {
+            try { if (os != null) os.close(); } catch (Throwable ignored) {}
+        }
     }
 
     // ------------------------------------------------------------------

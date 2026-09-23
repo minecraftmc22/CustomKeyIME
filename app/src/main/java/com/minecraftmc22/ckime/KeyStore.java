@@ -8,7 +8,9 @@ import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 /**
  * 自定义按键的持久化存储：SharedPreferences + JSON。
@@ -25,6 +27,7 @@ public class KeyStore {
 
     public static final String PREFS = "custom_keys_prefs";
     private static final String JSON = "keys_json";
+    private static final String K_COLLAPSED = "collapsed_groups";
     public static final String DEFAULT_GROUP = "默认";
 
     /** 加载所有分组（含按键），保留顺序。自动处理老格式迁移。 */
@@ -151,5 +154,63 @@ public class KeyStore {
             // (KeyStore 不持有引用，调用方需整体保存)
         }
         return true;
+    }
+
+    // ------------------------------------------------------------------
+    // 分组折叠状态（按分组名记录，独立于分组数据）
+    // ------------------------------------------------------------------
+
+    /** 读取所有「已折叠」的分组名。 */
+    public static Set<String> loadCollapsed(Context ctx) {
+        Set<String> set = new HashSet<>();
+        String raw = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .getString(K_COLLAPSED, "");
+        if (!raw.isEmpty()) {
+            try {
+                JSONArray arr = new JSONArray(raw);
+                for (int i = 0; i < arr.length(); i++) {
+                    String n = arr.optString(i, "");
+                    if (!n.isEmpty()) set.add(n);
+                }
+            } catch (JSONException ignored) {
+            }
+        }
+        return set;
+    }
+
+    public static boolean isCollapsed(Context ctx, String groupName) {
+        return loadCollapsed(ctx).contains(groupName);
+    }
+
+    /** 设置某个分组的折叠状态。 */
+    public static void setCollapsed(Context ctx, String groupName, boolean collapsed) {
+        if (groupName == null) return;
+        Set<String> set = loadCollapsed(ctx);
+        if (collapsed) set.add(groupName);
+        else set.remove(groupName);
+        saveCollapsed(ctx, set);
+    }
+
+    public static void saveCollapsed(Context ctx, Set<String> set) {
+        JSONArray arr = new JSONArray();
+        for (String s : set) arr.put(s);
+        ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .edit()
+                .putString(K_COLLAPSED, arr.toString())
+                .apply();
+    }
+
+    /** 分组重命名 / 删除后同步折叠状态，避免残留。 */
+    public static void renameCollapsed(Context ctx, String oldName, String newName) {
+        Set<String> set = loadCollapsed(ctx);
+        if (set.remove(oldName)) {
+            set.add(newName);
+            saveCollapsed(ctx, set);
+        }
+    }
+
+    public static void removeCollapsed(Context ctx, String groupName) {
+        Set<String> set = loadCollapsed(ctx);
+        if (set.remove(groupName)) saveCollapsed(ctx, set);
     }
 }

@@ -553,18 +553,39 @@ public class ImeService extends InputMethodService
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
         List<KeyGroup> groups = KeyStore.loadGroups(this);
+        java.util.Set<String> collapsedNames = KeyStore.loadCollapsed(this);
         boolean any = false;
         boolean first = true;
         for (KeyGroup g : groups) {
             if (g.keys.isEmpty()) continue;
             any = true;
+            final String gname = g.name;
+            final boolean isCollapsed = collapsedNames.contains(gname);
+
+            // 分组栏：点击折叠 / 展开（状态持久化）
+            LinearLayout header = new LinearLayout(this);
+            header.setOrientation(LinearLayout.HORIZONTAL);
+            header.setGravity(Gravity.CENTER_VERTICAL);
+            header.setPadding(dp(6), first ? dp(4) : dp(9), dp(6), dp(3));
+
             TextView t = new TextView(this);
-            t.setText(g.name);
+            t.setText((isCollapsed ? "▸ " : "▾ ") + gname
+                    + "  (" + g.keys.size() + (isCollapsed ? " 已折叠)" : ")"));
             t.setTextColor(ThemeHelper.accent);
             t.setTextSize(12);
-            t.setPadding(dp(6), first ? dp(4) : dp(10), dp(6), dp(2));
-            col.addView(t);
+            t.setLayoutParams(new LinearLayout.LayoutParams(0,
+                    ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+            header.addView(t);
+
+            header.setOnClickListener(v -> {
+                KeyStore.setCollapsed(this, gname, !isCollapsed);
+                rebuild();
+            });
+            col.addView(header, new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
             first = false;
+
+            if (isCollapsed) continue;   // 折叠的分组不渲染按键
 
             LinearLayout row = null;
             int i = 0;

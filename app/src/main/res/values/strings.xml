@@ -8,6 +8,11 @@
     <string name="add_group">＋ 新建分组</string>
     <string name="no_keys">还没有任何按键\n点击下方按钮新建，或在分组上点 ＋</string>
     <string name="keyboard_settings">键盘设置</string>
+    <string name="export_keys">⤓ 导出自定义按键</string>
+    <string name="export_title">导出自定义按键</string>
+    <string name="export_to_file">保存为 JSON 文件（备份 / 迁移）</string>
+    <string name="export_to_text">分享为文本（发给好友）</string>
+    <string name="export_to_clip">复制 JSON 到剪贴板</string>
 
     <string name="settings_title">键盘设置</string>
     <string name="settings_desc">调整键盘外观，保存即时生效。\n透明度：背景半透明，可透出下方内容；明暗：背景明暗程度。</string>
